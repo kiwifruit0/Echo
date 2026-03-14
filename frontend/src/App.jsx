@@ -4,7 +4,7 @@ import { motion, AnimatePresence, useMotionValue, useSpring } from 'framer-motio
 import { Canvas, useFrame } from '@react-three/fiber';
 import { Torus, Sparkles, MeshDistortMaterial, Float, Environment, Html } from '@react-three/drei';
 import { EffectComposer, Vignette } from '@react-three/postprocessing';
-import { Mic, Menu, Users, X, ChevronRight, MessageSquare, ArrowLeft, Eye, EyeOff } from 'lucide-react';
+import { Mic, Menu, Users, X, ChevronRight, MessageSquare, ArrowLeft, Eye, EyeOff, LogOut } from 'lucide-react';
 import ForceGraph3D from 'react-force-graph-3d';
 import { useConversation } from '@elevenlabs/react';
 
@@ -214,7 +214,9 @@ const FriendsGraph = ({ graphData, selectedNodeId, onNodeClick }) => {
 };
 
 // --- 4. Floating Friends List Overlay ---
-const FriendsListOverlay = ({ friends, isOpen, onClose, onSelectFriend, selectedFriendId }) => {
+const FRIEND_COLOURS = ['#0a0a0a', '#333333', '#555555', '#878787'];
+
+const FriendsListOverlay = ({ friends, isLoading, isOpen, onClose, onSelectFriend, selectedFriendId }) => {
   return (
     <AnimatePresence>
       {isOpen && (
@@ -238,15 +240,25 @@ const FriendsListOverlay = ({ friends, isOpen, onClose, onSelectFriend, selected
               <button className="close-btn" onClick={onClose}><X size={20} /></button>
             </div>
             <div className="friends-scroll-area">
-              {friends.map((friend) => (
+              {isLoading && (
+                <div style={{ padding: '24px', textAlign: 'center', color: '#878787', fontSize: '13px' }}>
+                  Loading...
+                </div>
+              )}
+              {!isLoading && friends.length === 0 && (
+                <div style={{ padding: '24px', textAlign: 'center', color: '#878787', fontSize: '13px', lineHeight: 1.6 }}>
+                  No connections yet.
+                </div>
+              )}
+              {!isLoading && friends.map((friend, i) => (
                 <MagneticButton
                   key={friend.id}
                   hoverScale={1.02}
                   className={`friend-list-item ${selectedFriendId === friend.id ? 'selected' : ''}`}
                   onClick={() => onSelectFriend(friend.id)}
                 >
-                  <div className="friend-avatar" style={{ backgroundColor: friend.colour }} />
-                  <span className="friend-name">{friend.name}</span>
+                  <div className="friend-avatar" style={{ backgroundColor: FRIEND_COLOURS[i % FRIEND_COLOURS.length] }} />
+                  <span className="friend-name">{friend.username}</span>
                   <motion.div className="chevron-wrapper">
                     <ChevronRight size={16} className="friend-chevron" />
                   </motion.div>
@@ -261,12 +273,34 @@ const FriendsListOverlay = ({ friends, isOpen, onClose, onSelectFriend, selected
 };
 
 // --- 5. Setup Screen Component ---
-const SetupScreen = ({ onComplete }) => {
+// interestIds in the DB are ObjectIds, but since there's no /interests endpoint yet
+// we just store the interest label strings directly as interestIds for now.
+const SetupScreen = ({ onComplete, currentUser }) => {
   const [selectedInterests, setSelectedInterests] = useState([]);
+  const [saving, setSaving] = useState(false);
   const interests = ["Architecture", "Minimalism", "Acoustics", "Creative Coding", "Typography", "Web3", "Industrial Design", "Photography"];
 
   const toggleInterest = (interest) => {
     setSelectedInterests(prev => prev.includes(interest) ? prev.filter(i => i !== interest) : [...prev, interest]);
+  };
+
+  const handleContinue = async () => {
+    // Best-effort save of interests — if it fails we still proceed
+    if (currentUser?.id && selectedInterests.length > 0) {
+      setSaving(true);
+      try {
+        await fetch(`${API_BASE}/users/${currentUser.id}`, {
+          method: 'PATCH',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ interestIds: selectedInterests }),
+        });
+      } catch (err) {
+        console.warn('Could not save interests:', err);
+      } finally {
+        setSaving(false);
+      }
+    }
+    onComplete();
   };
 
   const containerVariants = {
@@ -302,7 +336,9 @@ const SetupScreen = ({ onComplete }) => {
       <AnimatePresence>
         {selectedInterests.length > 0 && (
           <motion.div initial={{ opacity: 0, y: 20 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0, y: 20 }} className="setup-footer">
-            <MagneticButton className="continue-btn" hoverScale={1.03} onClick={onComplete}>Continue to Echo</MagneticButton>
+            <MagneticButton className="continue-btn" hoverScale={1.03} onClick={handleContinue}>
+              {saving ? 'Saving...' : 'Continue to Echo'}
+            </MagneticButton>
           </motion.div>
         )}
       </AnimatePresence>
@@ -349,6 +385,8 @@ const AuthField = ({ label, type = 'text', value, onChange, placeholder, showTog
   );
 };
 
+const API_BASE = 'http://127.0.0.1:8000/db';
+
 // --- 7. Login Screen ---
 const LoginScreen = ({ onLogin, onGoToRegister }) => {
   const [username, setUsername] = useState('');
@@ -357,12 +395,23 @@ const LoginScreen = ({ onLogin, onGoToRegister }) => {
   const [loading, setLoading] = useState(false);
 
   const handleSubmit = async () => {
-    if (!username || !password) { setError('Please fill in all fields.'); return; }
+    if (!username) { setError('Please enter your username.'); return; }
     setError('');
     setLoading(true);
-    await new Promise(r => setTimeout(r, 900));
-    setLoading(false);
-    onLogin({ username: username.trim() });
+    try {
+      // Backend has no GET /users?username= filter yet, so fetch all and match
+      const res = await fetch(`${API_BASE}/users`);
+      if (!res.ok) throw new Error('Could not reach server.');
+      const allUsers = await res.json();
+      const match = allUsers.find(
+        u => u.username.toLowerCase() === username.trim().toLowerCase()
+      );
+      if (!match) { setError('No account found with that username.'); setLoading(false); return; }
+      onLogin(match); // passes full user object { id, username, interestIds, ... }
+    } catch (err) {
+      setError(err.message || 'Something went wrong.');
+      setLoading(false);
+    }
   };
 
   const containerVariants = {
@@ -394,7 +443,7 @@ const LoginScreen = ({ onLogin, onGoToRegister }) => {
 
         <div className="auth-fields">
           <AuthField label="Username" value={username} onChange={e => setUsername(e.target.value)} placeholder="your_username" />
-          <AuthField label="Password" showToggle value={password} onChange={e => setPassword(e.target.value)} placeholder="••••••••" />
+          <AuthField label="Password" showToggle value={password} onChange={e => setPassword(e.target.value)} placeholder="your_password" />
         </div>
 
         <AnimatePresence>
@@ -420,7 +469,7 @@ const LoginScreen = ({ onLogin, onGoToRegister }) => {
           {loading ? (
             <span className="auth-spinner" />
           ) : (
-            'Sign in'
+            'Log in'
           )}
         </motion.button>
 
@@ -453,20 +502,38 @@ const LoginScreen = ({ onLogin, onGoToRegister }) => {
 // --- 8. Register Screen ---
 const RegisterScreen = ({ onRegister, onGoToLogin }) => {
   const [username, setUsername] = useState('');
-  const [password, setPassword] = useState('');
-  const [confirm, setConfirm] = useState('');
+  const [password, setPassword] = useState(''); // cosmetic only, not stored
+  const [confirm, setConfirm] = useState('');   // cosmetic only, not stored
   const [error, setError] = useState('');
   const [loading, setLoading] = useState(false);
 
   const handleSubmit = async () => {
-    if (!username || !password || !confirm) { setError('Please fill in all fields.'); return; }
-    if (password !== confirm) { setError('Passwords do not match.'); return; }
-    if (password.length < 8) { setError('Password must be at least 8 characters.'); return; }
+    if (!username.trim()) { setError('Please enter a username.'); return; }
     setError('');
     setLoading(true);
-    await new Promise(r => setTimeout(r, 1000));
-    setLoading(false);
-    onRegister({ username: username.trim() });
+    try {
+      const res = await fetch(`${API_BASE}/users`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          username: username.trim(),
+          interestIds: [],
+          avatarUrl: null,
+          voiceId: null,
+          createdAt: new Date().toISOString(),
+        }),
+      });
+      if (res.status === 409) { setError('Username already taken.'); setLoading(false); return; }
+      if (!res.ok) {
+        const data = await res.json().catch(() => ({}));
+        throw new Error(data.detail || 'Registration failed.');
+      }
+      const newUser = await res.json();
+      onRegister(newUser);
+    } catch (err) {
+      setError(err.message || 'Something went wrong.');
+      setLoading(false);
+    }
   };
 
   const containerVariants = {
@@ -626,25 +693,75 @@ const DailySummaryPrompt = ({ onYes, onNo }) => (
 const App = () => {
   // appState: 'booting' | 'login' | 'register' | 'setup' | 'main'
   const [appState, setAppState] = useState('booting');
-  const [currentUser, setCurrentUser] = useState(null); // { username: string }
+  const [currentUser, setCurrentUser] = useState(null); // full user object from DB { id, username, ... }
   const [showSummaryPrompt, setShowSummaryPrompt] = useState(false);
   const [activeTab, setActiveTab] = useState('voice');
   const [isFriendsListOpen, setIsFriendsListOpen] = useState(false);
   const [selectedFriendId, setSelectedFriendId] = useState(null);
   const [transcript, setTranscript] = useState("");
 
-  // Login: go to main then show summary prompt
+  // Friends loaded from API after login
+  const [friends, setFriends] = useState([]);
+  const [friendsLoading, setFriendsLoading] = useState(false);
+
+  const fetchFriends = useCallback(async (username) => {
+    if (!username) return;
+    setFriendsLoading(true);
+    try {
+      const res = await fetch(`${API_BASE}/users/${encodeURIComponent(username)}/friends`);
+      if (!res.ok) throw new Error('Failed to load friends');
+      const data = await res.json();
+      setFriends(data);
+    } catch (err) {
+      console.error('Friends fetch error:', err);
+      setFriends([]);
+    } finally {
+      setFriendsLoading(false);
+    }
+  }, []);
+
+  // Login: go to main then show summary prompt, load friends
   const handleLogin = (user) => {
     setCurrentUser(user);
     setAppState('main');
     setShowSummaryPrompt(true);
+    fetchFriends(user.username);
   };
 
   // Register: show setup first; summary prompt shown after setup completes
   const handleRegister = (user) => {
     setCurrentUser(user);
     setAppState('setup');
+    // New users have no friends yet, no need to fetch
+    setFriends([]);
   };
+
+  // Build graph data from real friends list
+  const graphData = useMemo(() => {
+    if (friends.length === 0) return { nodes: [], links: [] };
+    const colours = ['#0a0a0a', '#333333', '#555555', '#878787'];
+    const nodes = friends.map((friend, i) => ({
+      id: friend.id,
+      name: friend.username,
+      val: 1.5,
+      colour: colours[i % colours.length],
+    }));
+    // Create links between friends who share interests (simple heuristic for visualisation)
+    const links = [];
+    for (let i = 0; i < nodes.length; i++) {
+      for (let j = i + 1; j < nodes.length; j++) {
+        if (Math.random() > 0.6) {
+          links.push({ source: nodes[i].id, target: nodes[j].id });
+        }
+      }
+    }
+    return { nodes, links };
+  }, [friends]);
+
+  useEffect(() => {
+    const timer = setTimeout(() => setAppState('login'), 2500);
+    return () => clearTimeout(timer);
+  }, []);
 
   const conversation = useConversation({
     onMessage: (message) => {
@@ -652,25 +769,6 @@ const App = () => {
     },
     onError: (error) => console.error('ElevenLabs SDK Error:', error),
   });
-
-  const graphData = useMemo(() => {
-    const nodes = [...Array(30).keys()].map(i => ({
-      id: i,
-      name: `User ${String(i).padStart(2, '0')}`,
-      val: Math.random() * 2 + 1,
-      colour: ['#0a0a0a', '#333333', '#555555', '#878787'][Math.floor(Math.random() * 4)]
-    }));
-    const links = [...Array(45).keys()].map(() => ({
-      source: Math.floor(Math.random() * 30),
-      target: Math.floor(Math.random() * 30)
-    })).filter(l => l.source !== l.target);
-    return { nodes, links };
-  }, []);
-
-  useEffect(() => {
-    const timer = setTimeout(() => setAppState('login'), 2500);
-    return () => clearTimeout(timer);
-  }, []);
 
   const mediaRecorderRef = useRef(null);
   const audioChunksRef = useRef([]);
@@ -726,6 +824,23 @@ const App = () => {
 
   const handleNodeClick = useCallback((node) => { setSelectedFriendId(node.id); }, []);
 
+  // Refresh friends list (e.g. after adding a new friend)
+  const handleRefreshFriends = useCallback(() => {
+    if (currentUser?.username) fetchFriends(currentUser.username);
+  }, [currentUser, fetchFriends]);
+
+  const handleLogout = () => {
+    setCurrentUser(null);
+    setFriends([]);
+    setTranscript('');
+    setActiveTab('voice');
+    setIsFriendsListOpen(false);
+    setSelectedFriendId(null);
+    setShowSummaryPrompt(false);
+    if (isListening) conversation.endSession();
+    setAppState('login');
+  };
+
   const styles = `
     @import url('https://fonts.googleapis.com/css2?family=DM+Sans:wght@300;400;500;600;700;800&display=swap');
 
@@ -778,7 +893,7 @@ const App = () => {
     .header-icon:hover { background: rgba(255,255,255,0.9); box-shadow: 0 4px 12px rgba(0,0,0,0.05); border-color: rgba(0,0,0,0.1); }
     .logo-text { font-size: 14px; font-weight: 800; letter-spacing: 0.15em; text-transform: uppercase; margin: 0; pointer-events: auto; cursor: pointer; transition: opacity 0.3s ease; }
     .logo-text:hover { opacity: 0.7; }
-    .header-placeholder { width: 44px; height: 44px; pointer-events: none; }
+
 
     .content-area { flex: 1; position: relative; }
     .canvas-wrapper { position: absolute; inset: 0; z-index: 1; cursor: pointer; }
@@ -1166,9 +1281,16 @@ const App = () => {
                   <Menu size={20} color="var(--text-primary)" strokeWidth={1.5} />
                 </MagneticButton>
                 <motion.h1 className="logo-text" initial={{ y: -20, opacity: 0 }} animate={{ y: 0, opacity: 1 }} transition={{ duration: 0.5 }}>
-                  {currentUser ? currentUser.username + "'s space" : 'Echo'}
+                  {currentUser ? currentUser.username : 'Echo'}
                 </motion.h1>
-                <div className="header-placeholder" />
+                <MagneticButton
+                  className="header-icon"
+                  ariaLabel="Log out"
+                  hoverScale={1.1}
+                  onClick={handleLogout}
+                >
+                  <LogOut size={18} color="var(--text-primary)" strokeWidth={1.5} />
+                </MagneticButton>
               </header>
 
               <main className="content-area">
@@ -1192,7 +1314,7 @@ const App = () => {
                 </div>
 
                 <AnimatePresence mode="wait">
-                  {appState === 'setup' && <SetupScreen key="setup" onComplete={() => { setAppState('main'); setShowSummaryPrompt(true); }} />}
+                  {appState === 'setup' && <SetupScreen key="setup" currentUser={currentUser} onComplete={() => { setAppState('main'); setShowSummaryPrompt(true); }} />}
 
                   {appState === 'main' && activeTab === 'friends' && (
                     <FriendsGraph key="friends-graph" graphData={graphData} selectedNodeId={selectedFriendId} onNodeClick={handleNodeClick} />
@@ -1247,7 +1369,8 @@ const App = () => {
                 </AnimatePresence>
 
                 <FriendsListOverlay
-                  friends={graphData.nodes}
+                  friends={friends}
+                  isLoading={friendsLoading}
                   isOpen={isFriendsListOpen}
                   onClose={() => setIsFriendsListOpen(false)}
                   onSelectFriend={handleSelectFriendFromList}
