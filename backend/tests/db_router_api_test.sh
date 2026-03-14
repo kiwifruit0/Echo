@@ -47,7 +47,7 @@ USER_RESPONSE="$(curl -fsS -X POST "$DB_URL/users" \
   -H "Content-Type: application/json" \
   -d "{
     \"username\": \"script-user-$RUN_ID\",
-    \"email\": \"script-user-$RUN_ID@example.com\",
+    \"email\": \"script-user-$RUN_ID@example.co.uk\",
     \"avatarUrl\": \"https://example.com/avatar.png\",
     \"interestIds\": [],
     \"voiceId\": \"voice_script_$RUN_ID\",
