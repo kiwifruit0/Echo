@@ -23,6 +23,8 @@ forum_answers = db.forum_answers
 
 async def ensure_database_indexes() -> None:
     await users.create_index("username", unique=True)
+    await interests.create_index("name", unique=True)
     await friendships.create_index("friendPairKey", unique=True)
     await friendships.create_index([("incomingFriendId", 1), ("status", 1)])
     await friendships.create_index([("requestingFriendId", 1), ("status", 1)])
+    await daily_notes.create_index([("userId", 1), ("createdAt", 1)])

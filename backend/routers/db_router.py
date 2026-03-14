@@ -1,15 +1,23 @@
 import json
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from typing import Any
 from uuid import uuid4
 
 from bson import ObjectId
 from fastapi import APIRouter, File, Form, HTTPException, Query, UploadFile
 from fastapi.encoders import jsonable_encoder
+from pymongo import UpdateOne
 from pymongo.errors import DuplicateKeyError
 
 from ..models.models import DailyNote, ForumAnswer, ForumPost, FriendshipRequest, User
-from ..utils.database import daily_notes, forum_answers, forum_posts, friendships, users
+from ..utils.database import (
+    daily_notes,
+    forum_answers,
+    forum_posts,
+    friendships,
+    interests,
+    users,
+)
 from ..utils.supabase_storage import (
     SupabaseStorageError,
     create_storage_signed_url,
@@ -17,6 +25,49 @@ from ..utils.supabase_storage import (
 )
 
 router = APIRouter()
+
+DEFAULT_INTEREST_NAMES = [
+    "Arts & Design",
+    "Digital Culture",
+    "Content Creation",
+    "Crafting & DIY",
+    "Photography & Film",
+    "Competitive Gaming",
+    "Casual Gaming",
+    "Tabletop & Roleplaying",
+    "Live Music & Festivals",
+    "Performing Arts",
+    "Outdoor Adventure",
+    "Team Sports",
+    "Individual Athletics",
+    "Fitness & Wellness",
+    "Combat Sports",
+    "Home Cooking",
+    "Fine Dining & Gastronomy",
+    "Coffee & Tea Culture",
+    "Mixology & Nightlife",
+    "Baking & Pastry",
+    "Personal Finance",
+    "Tech & Innovation",
+    "Science & Nature",
+    "History & Humanities",
+    "Self-Improvement",
+    "Spirituality & Mindfulness",
+    "Social Activism",
+    "Volunteering & Charity",
+    "Language & Linguistics",
+    "Global Travel",
+    "Local Exploration",
+    "Home & Interior Styling",
+    "Gardening & Plant Care",
+    "Pet Ownership",
+    "Fashion & Personal Style",
+    "Automotive & Mechanics",
+    "Parenting & Family Life",
+    "Career & Entrepreneurship",
+    "Sustainable Living",
+    "Political Discourse",
+]
 
 
 def _parse_object_id(value: str, field_name: str) -> ObjectId:
@@ -88,6 +139,32 @@ def _friend_pair_key(first_id: ObjectId, second_id: ObjectId) -> str:
     return ":".join(sorted([str(first_id), str(second_id)]))
 
 
+def _previous_utc_day_window(reference_time: datetime) -> tuple[datetime, datetime]:
+    today_start = reference_time.replace(hour=0, minute=0, second=0, microsecond=0)
+    return today_start - timedelta(days=1), today_start
+
+
+async def _get_accepted_friend_ids(user_id: ObjectId) -> list[ObjectId]:
+    friend_ids: set[ObjectId] = set()
+    async for friendship in friendships.find(
+        {
+            "status": "accepted",
+            "$or": [
+                {"requestingFriendId": user_id},
+                {"incomingFriendId": user_id},
+            ],
+        }
+    ):
+        requesting_friend_id = friendship["requestingFriendId"]
+        incoming_friend_id = friendship["incomingFriendId"]
+        friend_ids.add(
+            incoming_friend_id
+            if requesting_friend_id == user_id
+            else requesting_friend_id
+        )
+    return list(friend_ids)
+
+
 @router.post("/users")
 async def create_user(user: User):
     payload = user.model_dump()
@@ -115,6 +192,25 @@ async def get_user(user_id: str):
     object_id = _parse_object_id(user_id, "user_id")
     user = await users.find_one({"_id": object_id})
     return _serialize_document(user)
+
+
+@router.post("/interests/seed-defaults")
+async def seed_default_interests():
+    created_at = datetime.now(timezone.utc)
+    operations = [
+        UpdateOne(
+            {"name": interest_name},
+            {"$setOnInsert": {"name": interest_name, "createdAt": created_at}},
+            upsert=True,
+        )
+        for interest_name in DEFAULT_INTEREST_NAMES
+    ]
+    result = await interests.bulk_write(operations, ordered=False)
+    return {
+        "totalDefaultInterests": len(DEFAULT_INTEREST_NAMES),
+        "inserted": result.upserted_count,
+        "alreadyPresent": len(DEFAULT_INTEREST_NAMES) - result.upserted_count,
+    }
 
 
 @router.post("/friendships/request")
@@ -225,25 +321,7 @@ async def deny_friend_request(friend_request: FriendshipRequest):
 @router.get("/users/{username}/friends")
 async def get_user_friends(username: str):
     user = await _get_user_by_username(username, "username")
-    user_id = user["_id"]
-
-    friend_ids: set[ObjectId] = set()
-    async for friendship in friendships.find(
-        {
-            "status": "accepted",
-            "$or": [
-                {"requestingFriendId": user_id},
-                {"incomingFriendId": user_id},
-            ],
-        }
-    ):
-        requesting_friend_id = friendship["requestingFriendId"]
-        incoming_friend_id = friendship["incomingFriendId"]
-        friend_ids.add(
-            incoming_friend_id
-            if requesting_friend_id == user_id
-            else requesting_friend_id
-        )
+    friend_ids = await _get_accepted_friend_ids(user["_id"])
 
     if not friend_ids:
         return []
@@ -252,6 +330,70 @@ async def get_user_friends(username: str):
         _serialize_document(friend)
         async for friend in users.find({"_id": {"$in": list(friend_ids)}})
     ]
+
+
+@router.get("/users/{username}/daily-summary")
+async def get_daily_summary(username: str):
+    user = await _get_user_by_username(username, "username")
+    user_id = user["_id"]
+    friend_ids = await _get_accepted_friend_ids(user_id)
+
+    summary_generated_at = datetime.now(timezone.utc)
+    await users.update_one(
+        {"_id": user_id}, {"$set": {"last_summary_time": summary_generated_at}}
+    )
+
+    window_start, window_end = _previous_utc_day_window(summary_generated_at)
+    previous_date = window_start.date().isoformat()
+
+    if not friend_ids:
+        return {
+            "username": username,
+            "last_summary_time": summary_generated_at.isoformat(),
+            "windowStart": window_start.isoformat(),
+            "windowEnd": window_end.isoformat(),
+            "friendSummaries": [],
+        }
+
+    friend_documents = [
+        friend async for friend in users.find({"_id": {"$in": friend_ids}})
+    ]
+    serialized_friends_by_id = {
+        friend["_id"]: _serialize_document(friend) for friend in friend_documents
+    }
+
+    notes_by_friend_id: dict[ObjectId, list[dict[str, Any]]] = {
+        friend_id: [] for friend_id in friend_ids
+    }
+    notes_query = {
+        "userId": {"$in": friend_ids},
+        "$or": [
+            {"createdAt": {"$gte": window_start, "$lt": window_end}},
+            {"date": previous_date},
+        ],
+    }
+    async for note in daily_notes.find(notes_query):
+        notes_by_friend_id[note["userId"]].append(_serialize_document(note))
+
+    friend_summaries = []
+    for friend_id in friend_ids:
+        friend = serialized_friends_by_id.get(friend_id)
+        if friend is None:
+            continue
+        friend_summaries.append(
+            {
+                "friend": friend,
+                "dailyNotes": notes_by_friend_id.get(friend_id, []),
+            }
+        )
+
+    return {
+        "username": username,
+        "last_summary_time": summary_generated_at.isoformat(),
+        "windowStart": window_start.isoformat(),
+        "windowEnd": window_end.isoformat(),
+        "friendSummaries": friend_summaries,
+    }
 
 
 @router.post("/daily-notes")

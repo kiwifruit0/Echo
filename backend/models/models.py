@@ -9,6 +9,7 @@ class User(BaseModel):
     avatarUrl: Optional[str]
     interestIds: List[str] = []
     voiceId: Optional[str]
+    last_summary_time: Optional[datetime] = None
     createdAt: datetime
 
 
