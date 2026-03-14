@@ -3,17 +3,14 @@ from pathlib import Path
 
 from dotenv import load_dotenv
 
+
+load_dotenv()
+
 ENV_PATH = Path(__file__).resolve().parents[1] / ".env"
 
 
 def _load_env():
     load_dotenv(dotenv_path=ENV_PATH)
-
-
-def get_gemini_key():
-    _load_env()
-    GEMINI_KEY = os.getenv("GEMINI_KEY")
-    return GEMINI_KEY
 
 
 def get_mongo_uri():
@@ -38,3 +35,7 @@ def get_supabase_storage_bucket():
     _load_env()
     SUPABASE_STORAGE_BUCKET = os.getenv("SUPABASE_STORAGE_BUCKET")
     return SUPABASE_STORAGE_BUCKET
+
+
+def get_elevenlabs_key():
+    return os.getenv("ELEVENLABS_KEY")
