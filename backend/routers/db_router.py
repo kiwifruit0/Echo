@@ -9,7 +9,14 @@ from fastapi.encoders import jsonable_encoder
 from pymongo import UpdateOne
 from pymongo.errors import DuplicateKeyError
 
-from ..models.models import DailyNote, ForumAnswer, ForumPost, FriendshipRequest, User
+from ..models.models import (
+    DailyNote,
+    ForumAnswer,
+    ForumPost,
+    FriendshipRequest,
+    User,
+    UserInterestAddRequest,
+)
 from ..utils.database import (
     daily_notes,
     forum_answers,
@@ -165,6 +172,27 @@ async def _get_accepted_friend_ids(user_id: ObjectId) -> list[ObjectId]:
     return list(friend_ids)
 
 
+def _normalize_interest_names(interest_names: list[str]) -> list[str]:
+    normalized_names: list[str] = []
+    for interest_name in interest_names:
+        normalized_name = interest_name.strip()
+        if not normalized_name:
+            raise HTTPException(
+                status_code=400,
+                detail="interestNames cannot contain empty values",
+            )
+        if normalized_name not in normalized_names:
+            normalized_names.append(normalized_name)
+
+    if not normalized_names:
+        raise HTTPException(
+            status_code=400,
+            detail="interestNames must contain at least one value",
+        )
+
+    return normalized_names
+
+
 @router.post("/users")
 async def create_user(user: User):
     payload = user.model_dump()
@@ -194,6 +222,39 @@ async def get_user(user_id: str):
     return _serialize_document(user)
 
 
+@router.post("/users/{username}/interests")
+async def add_user_interests(username: str, request: UserInterestAddRequest):
+    user = await _get_user_by_username(username, "username")
+    normalized_interest_names = _normalize_interest_names(request.interestNames)
+
+    interest_documents = [
+        interest
+        async for interest in interests.find({"name": {"$in": normalized_interest_names}})
+    ]
+    found_names = {interest["name"] for interest in interest_documents}
+    missing_interests = [
+        interest_name
+        for interest_name in normalized_interest_names
+        if interest_name not in found_names
+    ]
+    if missing_interests:
+        raise HTTPException(
+            status_code=404,
+            detail={
+                "message": "Some interests were not found",
+                "missingInterests": missing_interests,
+            },
+        )
+
+    interest_ids = [interest["_id"] for interest in interest_documents]
+    await users.update_one(
+        {"_id": user["_id"]},
+        {"$addToSet": {"interestIds": {"$each": interest_ids}}},
+    )
+    updated_user = await users.find_one({"_id": user["_id"]})
+    return _serialize_document(updated_user)
+
+
 @router.post("/interests/seed-defaults")
 async def seed_default_interests():
     created_at = datetime.now(timezone.utc)
@@ -211,6 +272,14 @@ async def seed_default_interests():
         "inserted": result.upserted_count,
         "alreadyPresent": len(DEFAULT_INTEREST_NAMES) - result.upserted_count,
     }
+
+
+@router.get("/interests")
+async def list_interests():
+    return [
+        _serialize_document(interest)
+        async for interest in interests.find({}).sort("name", 1)
+    ]
 
 
 @router.post("/friendships/request")

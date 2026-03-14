@@ -43,3 +43,7 @@ FriendshipStatus = Literal["accepted", "pending"]
 class FriendshipRequest(BaseModel):
     requestingUsername: str
     incomingUsername: str
+
+
+class UserInterestAddRequest(BaseModel):
+    interestNames: List[str]
