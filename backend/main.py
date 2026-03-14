@@ -1,8 +1,9 @@
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
-from .routers import test_router
-from .test.dotenv_test import print_dotenv
+from backend.routers import test_router
+from backend.routers import dotenv_router
+from backend.routers import transcribe_router          
 
 app = FastAPI()
 
@@ -15,6 +16,5 @@ app.add_middleware(
 )
 
 # routers
-app.include_router(test_router.router, prefix="/test")
-
-print_dotenv()
+app.include_router(dotenv_router.router, prefix="/envs")
+app.include_router(transcribe_router.router, prefix="/transcribe")   
