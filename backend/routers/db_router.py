@@ -673,3 +673,28 @@ async def get_audio_signed_url(
         raise HTTPException(status_code=502, detail=str(exc)) from exc
 
     return {"path": path, "signedUrl": signed_url, "expiresIn": expires_in}
+
+
+@router.get("/friendships/pending")
+async def get_pending_incoming_requests(incomingUsername: str = Query(...)):
+    incoming_user = await _get_user_by_username(incomingUsername, "incomingUsername")
+    incoming_user_id = incoming_user["_id"]
+ 
+    pending = []
+    async for friendship in friendships.find(
+        {
+            "incomingFriendId": incoming_user_id,
+            "status": "pending",
+        }
+    ):
+        # Resolve the requesting user's username so the frontend doesn't need a second fetch
+        requesting_user = await users.find_one({"_id": friendship["requestingFriendId"]})
+        requesting_username = requesting_user["username"] if requesting_user else str(friendship["requestingFriendId"])
+ 
+        doc = _serialize_document(friendship)
+        doc["requestingUsername"] = requesting_username
+        doc["incomingUsername"] = incomingUsername
+        pending.append(doc)
+ 
+    return pending
+ 

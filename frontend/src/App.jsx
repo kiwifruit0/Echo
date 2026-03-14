@@ -4,7 +4,7 @@ import { motion, AnimatePresence, useMotionValue, useSpring } from 'framer-motio
 import { Canvas, useFrame } from '@react-three/fiber';
 import { Torus, Sparkles, MeshDistortMaterial, Float, Environment, Html } from '@react-three/drei';
 import { EffectComposer, Vignette } from '@react-three/postprocessing';
-import { Mic, Menu, Users, X, ChevronRight, MessageSquare, ArrowLeft, Eye, EyeOff, LogOut } from 'lucide-react';
+import { Mic, Menu, Users, X, ChevronRight, MessageSquare, ArrowLeft, Eye, EyeOff, LogOut, Search, UserPlus, Check, Clock, UserCheck } from 'lucide-react';
 import ForceGraph3D from 'react-force-graph-3d';
 import { useConversation } from '@elevenlabs/react';
 
@@ -112,11 +112,9 @@ const ReactiveAudioRing = ({ isListening, volume = 0 }) => {
     if (outerRingRef.current && middleRingRef.current && innerRingRef.current) {
       outerRingRef.current.rotation.x = elapsedTime * 0.15;
       outerRingRef.current.rotation.y = elapsedTime * 0.2;
-
       middleRingRef.current.rotation.x = elapsedTime * -0.2;
       middleRingRef.current.rotation.y = elapsedTime * 0.1;
       middleRingRef.current.rotation.z = elapsedTime * 0.1;
-
       innerRingRef.current.rotation.y = elapsedTime * -0.3;
       innerRingRef.current.rotation.z = elapsedTime * -0.2;
 
@@ -213,10 +211,321 @@ const FriendsGraph = ({ graphData, selectedNodeId, onNodeClick }) => {
   );
 };
 
-// --- 4. Floating Friends List Overlay ---
+// --- 4. User Search & Add Friend Panel (inline in friends overlay) ---
 const FRIEND_COLOURS = ['#0a0a0a', '#333333', '#555555', '#878787'];
 
-const FriendsListOverlay = ({ friends, isLoading, isOpen, onClose, onSelectFriend, selectedFriendId }) => {
+const UserSearchSection = ({ currentUser, friends, onFriendAdded }) => {
+  const [query, setQuery] = useState('');
+  const [results, setResults] = useState([]);
+  const [searching, setSearching] = useState(false);
+  // Map of username -> 'sent' | 'error'
+  const [requestStates, setRequestStates] = useState({});
+  const [error, setError] = useState('');
+  const debounceRef = useRef(null);
+
+  const existingFriendUsernames = useMemo(() => new Set(friends.map(f => f.username)), [friends]);
+
+  const handleSearch = useCallback(async (q) => {
+    if (!q.trim()) { setResults([]); return; }
+    setSearching(true);
+    setError('');
+    try {
+      const res = await fetch(`${API_BASE}/users`);
+      if (!res.ok) throw new Error('Search failed');
+      const all = await res.json();
+      const filtered = all.filter(u =>
+        u.username.toLowerCase().includes(q.toLowerCase()) &&
+        u.username !== currentUser?.username
+      );
+      setResults(filtered);
+    } catch (err) {
+      setError('Could not search users.');
+    } finally {
+      setSearching(false);
+    }
+  }, [currentUser]);
+
+  const handleQueryChange = (e) => {
+    const val = e.target.value;
+    setQuery(val);
+    clearTimeout(debounceRef.current);
+    debounceRef.current = setTimeout(() => handleSearch(val), 350);
+  };
+
+  const handleAddFriend = async (targetUser) => {
+    if (!currentUser?.username) return;
+    // Optimistic
+    setRequestStates(prev => ({ ...prev, [targetUser.username]: 'sent' }));
+    try {
+      const res = await fetch(`${API_BASE}/friendships/request`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          requestingUsername: currentUser.username,
+          incomingUsername: targetUser.username,
+        }),
+      });
+      if (!res.ok) {
+        const data = await res.json().catch(() => ({}));
+        // Already friends or request exists — still show as sent
+        if (res.status !== 409) throw new Error(data.detail || 'Request failed');
+      }
+    } catch (err) {
+      console.warn('Could not send friend request:', err);
+      setRequestStates(prev => ({ ...prev, [targetUser.username]: 'error' }));
+    }
+  };
+
+  return (
+    <div className="search-section">
+      <div className="search-input-wrapper">
+        <Search size={14} className="search-icon" strokeWidth={2} />
+        <input
+          className="search-input"
+          type="text"
+          value={query}
+          onChange={handleQueryChange}
+          placeholder="Find people..."
+          autoComplete="off"
+          spellCheck={false}
+        />
+        <AnimatePresence>
+          {query && (
+            <motion.button
+              className="search-clear-btn"
+              onClick={() => { setQuery(''); setResults([]); }}
+              initial={{ opacity: 0, scale: 0.7 }}
+              animate={{ opacity: 1, scale: 1 }}
+              exit={{ opacity: 0, scale: 0.7 }}
+              transition={{ duration: 0.15 }}
+            >
+              <X size={12} strokeWidth={2.5} />
+            </motion.button>
+          )}
+        </AnimatePresence>
+      </div>
+
+      <AnimatePresence>
+        {searching && (
+          <motion.div className="search-status" initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }}>
+            <span className="search-spinner" />
+            <span>Searching...</span>
+          </motion.div>
+        )}
+        {error && !searching && (
+          <motion.p className="search-error" initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }}>
+            {error}
+          </motion.p>
+        )}
+        {!searching && results.length > 0 && (
+          <motion.div
+            className="search-results"
+            initial={{ opacity: 0, y: -6 }}
+            animate={{ opacity: 1, y: 0 }}
+            exit={{ opacity: 0, y: -6 }}
+            transition={{ duration: 0.2 }}
+          >
+            {results.map((user, i) => {
+              const alreadyFriend = existingFriendUsernames.has(user.username);
+              const state = requestStates[user.username];
+              return (
+                <motion.div
+                  key={user.id}
+                  className="search-result-item"
+                  initial={{ opacity: 0, x: -8 }}
+                  animate={{ opacity: 1, x: 0 }}
+                  transition={{ delay: i * 0.04 }}
+                >
+                  <div
+                    className="friend-avatar"
+                    style={{ backgroundColor: FRIEND_COLOURS[i % FRIEND_COLOURS.length], width: 32, height: 32, flexShrink: 0 }}
+                  />
+                  <span className="search-result-name">{user.username}</span>
+                  {alreadyFriend ? (
+                    <span className="search-result-badge badge--connected">
+                      <UserCheck size={12} strokeWidth={2} />
+                      <span>Connected</span>
+                    </span>
+                  ) : state === 'sent' ? (
+                    <span className="search-result-badge badge--sent">
+                      <Clock size={12} strokeWidth={2} />
+                      <span>Sent</span>
+                    </span>
+                  ) : state === 'error' ? (
+                    <span className="search-result-badge badge--error">
+                      <X size={12} strokeWidth={2} />
+                      <span>Failed</span>
+                    </span>
+                  ) : (
+                    <motion.button
+                      className="add-friend-btn"
+                      whileHover={{ scale: 1.06, y: -1 }}
+                      whileTap={{ scale: 0.93 }}
+                      onClick={() => handleAddFriend(user)}
+                    >
+                      <UserPlus size={13} strokeWidth={2} />
+                      <span>Add</span>
+                    </motion.button>
+                  )}
+                </motion.div>
+              );
+            })}
+          </motion.div>
+        )}
+        {!searching && query.trim() && results.length === 0 && !error && (
+          <motion.p className="search-empty" initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }}>
+            No users found for "{query}"
+          </motion.p>
+        )}
+      </AnimatePresence>
+    </div>
+  );
+};
+
+// --- 5. Incoming Friend Requests Section ---
+// Fetches via GET /db/friendships/pending?incomingUsername=<username>
+// Accepts via POST /db/friendships/accept { requestingUsername, incomingUsername }
+// Denies  via POST /db/friendships/deny  { requestingUsername, incomingUsername }
+const IncomingRequestsSection = ({ currentUser, onAccept }) => {
+  const [requests, setRequests] = useState([]);
+  const [loading, setLoading] = useState(false);
+  // Map of friendshipId -> 'accepted' | 'declined'
+  const [resolvedIds, setResolvedIds] = useState({});
+
+  const fetchRequests = useCallback(async () => {
+    if (!currentUser?.username) return;
+    setLoading(true);
+    try {
+      const res = await fetch(
+        `${API_BASE}/friendships/pending?incomingUsername=${encodeURIComponent(currentUser.username)}`
+      );
+      if (!res.ok) throw new Error();
+      const data = await res.json();
+      setRequests(data);
+    } catch {
+      setRequests([]);
+    } finally {
+      setLoading(false);
+    }
+  }, [currentUser]);
+
+  useEffect(() => { fetchRequests(); }, [fetchRequests]);
+
+  const handleAccept = async (req) => {
+    // Optimistic
+    setResolvedIds(prev => ({ ...prev, [req.id]: 'accepted' }));
+    try {
+      const res = await fetch(`${API_BASE}/friendships/accept`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          requestingUsername: req.requestingUsername,
+          incomingUsername: currentUser.username,
+        }),
+      });
+      if (!res.ok) throw new Error();
+      // Friendship now accepted in DB — refresh the friends list so graph updates
+      onAccept?.();
+    } catch (err) {
+      console.warn('Accept request failed:', err);
+      setResolvedIds(prev => ({ ...prev, [req.id]: undefined }));
+    }
+  };
+
+  const handleDecline = async (req) => {
+    setResolvedIds(prev => ({ ...prev, [req.id]: 'declined' }));
+    try {
+      await fetch(`${API_BASE}/friendships/deny`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          requestingUsername: req.requestingUsername,
+          incomingUsername: currentUser.username,
+        }),
+      });
+    } catch (err) {
+      console.warn('Decline request failed:', err);
+      setResolvedIds(prev => ({ ...prev, [req.id]: undefined }));
+    }
+  };
+
+  const visibleRequests = requests.filter(r => resolvedIds[r.id] !== 'declined');
+  const pendingCount = visibleRequests.filter(r => !resolvedIds[r.id]).length;
+
+  if (loading) return (
+    <div className="requests-section">
+      <div className="section-label">Requests</div>
+      <div style={{ padding: '12px', textAlign: 'center', color: '#878787', fontSize: '12px' }}>Loading...</div>
+    </div>
+  );
+
+  if (visibleRequests.length === 0) return null;
+
+  return (
+    <div className="requests-section">
+      <div className="section-label">
+        Requests
+        {pendingCount > 0 && <span className="requests-badge">{pendingCount}</span>}
+      </div>
+      <AnimatePresence initial={false}>
+        {visibleRequests.map((req, i) => {
+          const accepted = resolvedIds[req.id] === 'accepted';
+          return (
+            <motion.div
+              key={req.id}
+              className={`request-item ${accepted ? 'request-item--accepted' : ''}`}
+              initial={{ opacity: 0, x: -12, height: 0 }}
+              animate={{ opacity: 1, x: 0, height: 'auto' }}
+              exit={{ opacity: 0, x: 12, height: 0 }}
+              transition={{ duration: 0.28, ease: [0.16, 1, 0.3, 1] }}
+            >
+              <div
+                className="friend-avatar"
+                style={{ backgroundColor: FRIEND_COLOURS[i % FRIEND_COLOURS.length], width: 34, height: 34, flexShrink: 0 }}
+              />
+              <div className="request-info">
+                <span className="request-name">{req.requestingUsername}</span>
+                <span className="request-sub">wants to connect</span>
+              </div>
+              {accepted ? (
+                <motion.span
+                  className="search-result-badge badge--connected"
+                  initial={{ scale: 0.6, opacity: 0 }}
+                  animate={{ scale: 1, opacity: 1 }}
+                >
+                  <Check size={12} strokeWidth={2.5} />
+                  <span>Added</span>
+                </motion.span>
+              ) : (
+                <div className="request-actions">
+                  <motion.button
+                    className="request-btn request-btn--accept"
+                    whileHover={{ scale: 1.08 }}
+                    whileTap={{ scale: 0.92 }}
+                    onClick={() => handleAccept(req)}
+                  >
+                    <Check size={13} strokeWidth={2.5} />
+                  </motion.button>
+                  <motion.button
+                    className="request-btn request-btn--decline"
+                    whileHover={{ scale: 1.08 }}
+                    whileTap={{ scale: 0.92 }}
+                    onClick={() => handleDecline(req)}
+                  >
+                    <X size={13} strokeWidth={2.5} />
+                  </motion.button>
+                </div>
+              )}
+            </motion.div>
+          );
+        })}
+      </AnimatePresence>
+    </div>
+  );
+};
+
+// --- 6. Floating Friends List Overlay ---
+const FriendsListOverlay = ({ friends, isLoading, isOpen, onClose, onSelectFriend, selectedFriendId, currentUser, onFriendAdded }) => {
   return (
     <AnimatePresence>
       {isOpen && (
@@ -239,15 +548,34 @@ const FriendsListOverlay = ({ friends, isLoading, isOpen, onClose, onSelectFrien
               <h3>Connections</h3>
               <button className="close-btn" onClick={onClose}><X size={20} /></button>
             </div>
+
+            {/* Search for users to add */}
+            <UserSearchSection
+              currentUser={currentUser}
+              friends={friends}
+              onFriendAdded={onFriendAdded}
+            />
+
             <div className="friends-scroll-area">
+              {/* Incoming friend requests */}
+              <IncomingRequestsSection
+                currentUser={currentUser}
+                onAccept={onFriendAdded}
+              />
+
+              {/* Existing connections */}
+              {(friends.length > 0 || isLoading) && (
+                <div className="section-label" style={{ marginTop: '8px' }}>Connected</div>
+              )}
+
               {isLoading && (
-                <div style={{ padding: '24px', textAlign: 'center', color: '#878787', fontSize: '13px' }}>
+                <div style={{ padding: '16px', textAlign: 'center', color: '#878787', fontSize: '13px' }}>
                   Loading...
                 </div>
               )}
               {!isLoading && friends.length === 0 && (
-                <div style={{ padding: '24px', textAlign: 'center', color: '#878787', fontSize: '13px', lineHeight: 1.6 }}>
-                  No connections yet.
+                <div style={{ padding: '16px 12px', color: '#878787', fontSize: '13px', lineHeight: 1.6 }}>
+                  No connections yet — search above to find people.
                 </div>
               )}
               {!isLoading && friends.map((friend, i) => (
@@ -272,9 +600,7 @@ const FriendsListOverlay = ({ friends, isLoading, isOpen, onClose, onSelectFrien
   );
 };
 
-// --- 5. Setup Screen Component ---
-// interestIds in the DB are ObjectIds, but since there's no /interests endpoint yet
-// we just store the interest label strings directly as interestIds for now.
+// --- 7. Setup Screen Component ---
 const SetupScreen = ({ onComplete, currentUser }) => {
   const [selectedInterests, setSelectedInterests] = useState([]);
   const [saving, setSaving] = useState(false);
@@ -285,7 +611,6 @@ const SetupScreen = ({ onComplete, currentUser }) => {
   };
 
   const handleContinue = async () => {
-    // Best-effort save of interests — if it fails we still proceed
     if (currentUser?.id && selectedInterests.length > 0) {
       setSaving(true);
       try {
@@ -346,7 +671,7 @@ const SetupScreen = ({ onComplete, currentUser }) => {
   );
 };
 
-// --- 6. Auth Input Field Component ---
+// --- 8. Auth Input Field Component ---
 const AuthField = ({ label, type = 'text', value, onChange, placeholder, showToggle = false }) => {
   const [visible, setVisible] = useState(false);
   const inputType = showToggle ? (visible ? 'text' : 'password') : type;
@@ -387,7 +712,7 @@ const AuthField = ({ label, type = 'text', value, onChange, placeholder, showTog
 
 const API_BASE = 'http://127.0.0.1:8000/db';
 
-// --- 7. Login Screen ---
+// --- 9. Login Screen ---
 const LoginScreen = ({ onLogin, onGoToRegister }) => {
   const [username, setUsername] = useState('');
   const [password, setPassword] = useState('');
@@ -399,7 +724,6 @@ const LoginScreen = ({ onLogin, onGoToRegister }) => {
     setError('');
     setLoading(true);
     try {
-      // Backend has no GET /users?username= filter yet, so fetch all and match
       const res = await fetch(`${API_BASE}/users`);
       if (!res.ok) throw new Error('Could not reach server.');
       const allUsers = await res.json();
@@ -407,7 +731,7 @@ const LoginScreen = ({ onLogin, onGoToRegister }) => {
         u => u.username.toLowerCase() === username.trim().toLowerCase()
       );
       if (!match) { setError('No account found with that username.'); setLoading(false); return; }
-      onLogin(match); // passes full user object { id, username, interestIds, ... }
+      onLogin(match);
     } catch (err) {
       setError(err.message || 'Something went wrong.');
       setLoading(false);
@@ -421,89 +745,51 @@ const LoginScreen = ({ onLogin, onGoToRegister }) => {
   };
 
   return (
-    <motion.div
-      className="auth-container"
-      variants={containerVariants}
-      initial="hidden"
-      animate="show"
-      exit="exit"
-    >
-      {/* Ambient decorative ring */}
+    <motion.div className="auth-container" variants={containerVariants} initial="hidden" animate="show" exit="exit">
       <div className="auth-ring" aria-hidden />
-
       <motion.div className="auth-wordmark" variants={{ hidden: { opacity: 0, y: -10 }, show: { opacity: 1, y: 0 } }}>
         E C H O
       </motion.div>
-
       <motion.div className="auth-card" variants={{ hidden: { opacity: 0, y: 30, scale: 0.97 }, show: { opacity: 1, y: 0, scale: 1, transition: { type: 'spring', stiffness: 260, damping: 22 } } }}>
         <div className="auth-card-header">
           <h2 className="auth-title">Welcome back.</h2>
           <p className="auth-sub">Sign in to your Echo space.</p>
         </div>
-
         <div className="auth-fields">
           <AuthField label="Username" value={username} onChange={e => setUsername(e.target.value)} placeholder="your_username" />
           <AuthField label="Password" showToggle value={password} onChange={e => setPassword(e.target.value)} placeholder="your_password" />
         </div>
-
         <AnimatePresence>
           {error && (
-            <motion.p
-              className="auth-error"
-              initial={{ opacity: 0, y: -4 }}
-              animate={{ opacity: 1, y: 0 }}
-              exit={{ opacity: 0, y: -4 }}
-            >
+            <motion.p className="auth-error" initial={{ opacity: 0, y: -4 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0, y: -4 }}>
               {error}
             </motion.p>
           )}
         </AnimatePresence>
-
-        <motion.button
-          className={`auth-submit-btn ${loading ? 'loading' : ''}`}
-          whileHover={{ scale: 1.02, y: -1 }}
-          whileTap={{ scale: 0.97 }}
-          onClick={handleSubmit}
-          disabled={loading}
-        >
-          {loading ? (
-            <span className="auth-spinner" />
-          ) : (
-            'Log in'
-          )}
+        <motion.button className={`auth-submit-btn ${loading ? 'loading' : ''}`} whileHover={{ scale: 1.02, y: -1 }} whileTap={{ scale: 0.97 }} onClick={handleSubmit} disabled={loading}>
+          {loading ? <span className="auth-spinner" /> : 'Log in'}
         </motion.button>
-
         <div className="auth-divider">
           <span />
           <p>or</p>
           <span />
         </div>
-
-        <motion.button
-          className="auth-secondary-btn"
-          whileHover={{ scale: 1.02 }}
-          whileTap={{ scale: 0.97 }}
-          onClick={onGoToRegister}
-        >
+        <motion.button className="auth-secondary-btn" whileHover={{ scale: 1.02 }} whileTap={{ scale: 0.97 }} onClick={onGoToRegister}>
           Create an account
         </motion.button>
       </motion.div>
-
-      <motion.p
-        className="auth-legal"
-        variants={{ hidden: { opacity: 0 }, show: { opacity: 1, transition: { delay: 0.6 } } }}
-      >
+      <motion.p className="auth-legal" variants={{ hidden: { opacity: 0 }, show: { opacity: 1, transition: { delay: 0.6 } } }}>
         By continuing, you agree to our Terms & Privacy Policy.
       </motion.p>
     </motion.div>
   );
 };
 
-// --- 8. Register Screen ---
+// --- 10. Register Screen ---
 const RegisterScreen = ({ onRegister, onGoToLogin }) => {
   const [username, setUsername] = useState('');
-  const [password, setPassword] = useState(''); // cosmetic only, not stored
-  const [confirm, setConfirm] = useState('');   // cosmetic only, not stored
+  const [password, setPassword] = useState('');
+  const [confirm, setConfirm] = useState('');
   const [error, setError] = useState('');
   const [loading, setLoading] = useState(false);
 
@@ -543,23 +829,12 @@ const RegisterScreen = ({ onRegister, onGoToLogin }) => {
   };
 
   return (
-    <motion.div
-      className="auth-container"
-      variants={containerVariants}
-      initial="hidden"
-      animate="show"
-      exit="exit"
-    >
+    <motion.div className="auth-container" variants={containerVariants} initial="hidden" animate="show" exit="exit">
       <div className="auth-ring auth-ring--register" aria-hidden />
-
       <motion.div className="auth-wordmark" variants={{ hidden: { opacity: 0, y: -10 }, show: { opacity: 1, y: 0 } }}>
         E C H O
       </motion.div>
-
-      <motion.div
-        className="auth-card"
-        variants={{ hidden: { opacity: 0, y: 30, scale: 0.97 }, show: { opacity: 1, y: 0, scale: 1, transition: { type: 'spring', stiffness: 260, damping: 22 } } }}
-      >
+      <motion.div className="auth-card" variants={{ hidden: { opacity: 0, y: 30, scale: 0.97 }, show: { opacity: 1, y: 0, scale: 1, transition: { type: 'spring', stiffness: 260, damping: 22 } } }}>
         <div className="auth-card-header">
           <button className="auth-back-btn" onClick={onGoToLogin} aria-label="Back to login">
             <ArrowLeft size={16} strokeWidth={2} />
@@ -568,73 +843,36 @@ const RegisterScreen = ({ onRegister, onGoToLogin }) => {
           <h2 className="auth-title">Join Echo.</h2>
           <p className="auth-sub">Create your account to get started.</p>
         </div>
-
         <div className="auth-fields">
           <AuthField label="Username" value={username} onChange={e => setUsername(e.target.value)} placeholder="your_username" />
           <AuthField label="Password" showToggle value={password} onChange={e => setPassword(e.target.value)} placeholder="Min. 8 characters" />
           <AuthField label="Confirm password" showToggle value={confirm} onChange={e => setConfirm(e.target.value)} placeholder="Repeat password" />
         </div>
-
         <AnimatePresence>
           {error && (
-            <motion.p
-              className="auth-error"
-              initial={{ opacity: 0, y: -4 }}
-              animate={{ opacity: 1, y: 0 }}
-              exit={{ opacity: 0, y: -4 }}
-            >
+            <motion.p className="auth-error" initial={{ opacity: 0, y: -4 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0, y: -4 }}>
               {error}
             </motion.p>
           )}
         </AnimatePresence>
-
-        <motion.button
-          className={`auth-submit-btn ${loading ? 'loading' : ''}`}
-          whileHover={{ scale: 1.02, y: -1 }}
-          whileTap={{ scale: 0.97 }}
-          onClick={handleSubmit}
-          disabled={loading}
-        >
+        <motion.button className={`auth-submit-btn ${loading ? 'loading' : ''}`} whileHover={{ scale: 1.02, y: -1 }} whileTap={{ scale: 0.97 }} onClick={handleSubmit} disabled={loading}>
           {loading ? <span className="auth-spinner" /> : 'Create account'}
         </motion.button>
       </motion.div>
-
-      <motion.p
-        className="auth-legal"
-        variants={{ hidden: { opacity: 0 }, show: { opacity: 1, transition: { delay: 0.7 } } }}
-      >
+      <motion.p className="auth-legal" variants={{ hidden: { opacity: 0 }, show: { opacity: 1, transition: { delay: 0.7 } } }}>
         By continuing, you agree to our Terms & Privacy Policy.
       </motion.p>
     </motion.div>
   );
 };
 
-// --- 9. Daily Summary Prompt ---
+// --- 11. Daily Summary Prompt ---
 const DailySummaryPrompt = ({ onYes, onNo }) => (
   <AnimatePresence>
-    <motion.div
-      className="summary-backdrop"
-      initial={{ opacity: 0 }}
-      animate={{ opacity: 1 }}
-      exit={{ opacity: 0 }}
-      transition={{ duration: 0.25 }}
-    >
-      <motion.div
-        className="summary-card"
-        initial={{ opacity: 0, y: 32, scale: 0.96 }}
-        animate={{ opacity: 1, y: 0, scale: 1 }}
-        exit={{ opacity: 0, y: 16, scale: 0.97 }}
-        transition={{ type: 'spring', stiffness: 320, damping: 28, delay: 0.05 }}
-      >
-        {/* decorative pulse ring */}
+    <motion.div className="summary-backdrop" initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }} transition={{ duration: 0.25 }}>
+      <motion.div className="summary-card" initial={{ opacity: 0, y: 32, scale: 0.96 }} animate={{ opacity: 1, y: 0, scale: 1 }} exit={{ opacity: 0, y: 16, scale: 0.97 }} transition={{ type: 'spring', stiffness: 320, damping: 28, delay: 0.05 }}>
         <div className="summary-ring" aria-hidden />
-
-        <motion.div
-          className="summary-icon"
-          initial={{ scale: 0.7, opacity: 0 }}
-          animate={{ scale: 1, opacity: 1 }}
-          transition={{ type: 'spring', stiffness: 400, damping: 20, delay: 0.15 }}
-        >
+        <motion.div className="summary-icon" initial={{ scale: 0.7, opacity: 0 }} animate={{ scale: 1, opacity: 1 }} transition={{ type: 'spring', stiffness: 400, damping: 20, delay: 0.15 }}>
           <svg width="28" height="28" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round">
             <path d="M12 2a3 3 0 0 1 3 3v7a3 3 0 0 1-6 0V5a3 3 0 0 1 3-3z"/>
             <path d="M19 10v2a7 7 0 0 1-14 0v-2"/>
@@ -642,65 +880,27 @@ const DailySummaryPrompt = ({ onYes, onNo }) => (
             <line x1="8" y1="23" x2="16" y2="23"/>
           </svg>
         </motion.div>
-
-        <motion.h3
-          className="summary-title"
-          initial={{ opacity: 0, y: 8 }}
-          animate={{ opacity: 1, y: 0 }}
-          transition={{ delay: 0.2 }}
-        >
-          Daily Summary
-        </motion.h3>
-
-        <motion.p
-          className="summary-body"
-          initial={{ opacity: 0, y: 8 }}
-          animate={{ opacity: 1, y: 0 }}
-          transition={{ delay: 0.27 }}
-        >
-          Would you like to hear your daily summary?
-        </motion.p>
-
-        <motion.div
-          className="summary-actions"
-          initial={{ opacity: 0, y: 8 }}
-          animate={{ opacity: 1, y: 0 }}
-          transition={{ delay: 0.34 }}
-        >
-          <motion.button
-            className="summary-btn summary-btn--yes"
-            whileHover={{ scale: 1.04, y: -1 }}
-            whileTap={{ scale: 0.96 }}
-            onClick={onYes}
-          >
-            Yes, play it
-          </motion.button>
-          <motion.button
-            className="summary-btn summary-btn--no"
-            whileHover={{ scale: 1.04, y: -1 }}
-            whileTap={{ scale: 0.96 }}
-            onClick={onNo}
-          >
-            Not now
-          </motion.button>
+        <motion.h3 className="summary-title" initial={{ opacity: 0, y: 8 }} animate={{ opacity: 1, y: 0 }} transition={{ delay: 0.2 }}>Daily Summary</motion.h3>
+        <motion.p className="summary-body" initial={{ opacity: 0, y: 8 }} animate={{ opacity: 1, y: 0 }} transition={{ delay: 0.27 }}>Would you like to hear your daily summary?</motion.p>
+        <motion.div className="summary-actions" initial={{ opacity: 0, y: 8 }} animate={{ opacity: 1, y: 0 }} transition={{ delay: 0.34 }}>
+          <motion.button className="summary-btn summary-btn--yes" whileHover={{ scale: 1.04, y: -1 }} whileTap={{ scale: 0.96 }} onClick={onYes}>Yes, play it</motion.button>
+          <motion.button className="summary-btn summary-btn--no" whileHover={{ scale: 1.04, y: -1 }} whileTap={{ scale: 0.96 }} onClick={onNo}>Not now</motion.button>
         </motion.div>
       </motion.div>
     </motion.div>
   </AnimatePresence>
 );
 
-// --- 10. Main Application Component ---
+// --- 12. Main Application Component ---
 const App = () => {
-  // appState: 'booting' | 'login' | 'register' | 'setup' | 'main'
   const [appState, setAppState] = useState('booting');
-  const [currentUser, setCurrentUser] = useState(null); // full user object from DB { id, username, ... }
+  const [currentUser, setCurrentUser] = useState(null);
   const [showSummaryPrompt, setShowSummaryPrompt] = useState(false);
   const [activeTab, setActiveTab] = useState('voice');
   const [isFriendsListOpen, setIsFriendsListOpen] = useState(false);
   const [selectedFriendId, setSelectedFriendId] = useState(null);
   const [transcript, setTranscript] = useState("");
 
-  // Friends loaded from API after login
   const [friends, setFriends] = useState([]);
   const [friendsLoading, setFriendsLoading] = useState(false);
 
@@ -720,7 +920,6 @@ const App = () => {
     }
   }, []);
 
-  // Login: go to main then show summary prompt, load friends
   const handleLogin = (user) => {
     setCurrentUser(user);
     setAppState('main');
@@ -728,15 +927,12 @@ const App = () => {
     fetchFriends(user.username);
   };
 
-  // Register: show setup first; summary prompt shown after setup completes
   const handleRegister = (user) => {
     setCurrentUser(user);
     setAppState('setup');
-    // New users have no friends yet, no need to fetch
     setFriends([]);
   };
 
-  // Build graph data from real friends list
   const graphData = useMemo(() => {
     if (friends.length === 0) return { nodes: [], links: [] };
     const colours = ['#0a0a0a', '#333333', '#555555', '#878787'];
@@ -746,7 +942,6 @@ const App = () => {
       val: 1.5,
       colour: colours[i % colours.length],
     }));
-    // Create links between friends who share interests (simple heuristic for visualisation)
     const links = [];
     for (let i = 0; i < nodes.length; i++) {
       for (let j = i + 1; j < nodes.length; j++) {
@@ -764,15 +959,12 @@ const App = () => {
   }, []);
 
   const conversation = useConversation({
-    onMessage: (message) => {
-      if (message.text) setTranscript(message.text);
-    },
+    onMessage: (message) => { if (message.text) setTranscript(message.text); },
     onError: (error) => console.error('ElevenLabs SDK Error:', error),
   });
 
   const mediaRecorderRef = useRef(null);
   const audioChunksRef = useRef([]);
-
   const isListening = conversation.status === 'connected';
 
   const toggleListening = useCallback(async () => {
@@ -802,7 +994,7 @@ const App = () => {
               headers: { 'xi-api-key': import.meta.env.VITE_ELEVENLABS_API_KEY },
               body: formData,
             });
-            if (!sttResponse.ok) { const errData = await sttResponse.json(); throw new Error("STT request failed"); }
+            if (!sttResponse.ok) throw new Error("STT request failed");
             const sttData = await sttResponse.json();
             setTranscript(sttData.text);
           } catch (err) { console.error("Transcription error:", err); }
@@ -824,7 +1016,6 @@ const App = () => {
 
   const handleNodeClick = useCallback((node) => { setSelectedFriendId(node.id); }, []);
 
-  // Refresh friends list (e.g. after adding a new friend)
   const handleRefreshFriends = useCallback(() => {
     if (currentUser?.username) fetchFriends(currentUser.username);
   }, [currentUser, fetchFriends]);
@@ -894,7 +1085,6 @@ const App = () => {
     .logo-text { font-size: 14px; font-weight: 800; letter-spacing: 0.15em; text-transform: uppercase; margin: 0; pointer-events: auto; cursor: pointer; transition: opacity 0.3s ease; }
     .logo-text:hover { opacity: 0.7; }
 
-
     .content-area { flex: 1; position: relative; }
     .canvas-wrapper { position: absolute; inset: 0; z-index: 1; cursor: pointer; }
     .graph-container { position: absolute; inset: 0; z-index: 2; cursor: grab; }
@@ -958,13 +1148,13 @@ const App = () => {
       border-right: 1px solid rgba(0,0,0,0.05); z-index: 50; display: flex; flex-direction: column;
       box-shadow: 20px 0 40px rgba(0,0,0,0.05); padding-top: max(24px, env(safe-area-inset-top));
     }
-    .friends-list-header { display: flex; justify-content: space-between; align-items: center; padding: 0 24px 20px 24px; border-bottom: 1px solid rgba(0,0,0,0.05); }
+    .friends-list-header { display: flex; justify-content: space-between; align-items: center; padding: 0 24px 16px 24px; border-bottom: 1px solid rgba(0,0,0,0.05); }
     .friends-list-header h3 { font-size: 18px; font-weight: 700; margin: 0; letter-spacing: -0.02em; }
     .close-btn { background: transparent; border: none; color: var(--text-secondary); cursor: pointer; display: flex; align-items: center; padding: 4px; border-radius: 50%; transition: var(--transition-smooth); }
     .close-btn:hover { color: var(--text-primary); transform: rotate(90deg); background: rgba(0,0,0,0.05); }
-    .friends-scroll-area { flex: 1; overflow-y: auto; padding: 12px; }
+    .friends-scroll-area { flex: 1; overflow-y: auto; padding: 8px 12px 12px 12px; }
     .friends-scroll-area::-webkit-scrollbar { display: none; }
-    .friend-list-item { width: 100%; display: flex; align-items: center; gap: 16px; padding: 16px 12px; background: transparent; border: none; border-radius: 16px; cursor: pointer; text-align: left; transition: var(--transition-smooth); }
+    .friend-list-item { width: 100%; display: flex; align-items: center; gap: 16px; padding: 12px 12px; background: transparent; border: none; border-radius: 16px; cursor: pointer; text-align: left; transition: var(--transition-smooth); }
     .friend-list-item:hover { background: rgba(0,0,0,0.03); transform: translateX(4px); }
     .friend-list-item.selected { background: rgba(0,0,0,0.06); box-shadow: inset 2px 0 0 0 var(--text-primary); }
     .friend-avatar { width: 40px; height: 40px; border-radius: 50%; flex-shrink: 0; box-shadow: inset 0 2px 4px rgba(0,0,0,0.2); transition: var(--transition-smooth); }
@@ -975,6 +1165,161 @@ const App = () => {
     .friend-chevron { color: var(--text-secondary); opacity: 0.5; transition: var(--transition-smooth); }
     .friend-list-item:hover .chevron-wrapper { transform: translateX(2px); }
     .friend-list-item:hover .friend-chevron { opacity: 1; color: var(--text-primary); }
+
+    /* ── Search section ── */
+    .search-section {
+      padding: 14px 16px 10px 16px;
+      border-bottom: 1px solid rgba(0,0,0,0.05);
+    }
+    .search-input-wrapper {
+      position: relative; display: flex; align-items: center;
+    }
+    .search-icon {
+      position: absolute; left: 12px; color: var(--text-secondary); pointer-events: none; flex-shrink: 0;
+    }
+    .search-input {
+      width: 100%; padding: 10px 36px 10px 34px;
+      background: rgba(0,0,0,0.04);
+      border: 1px solid rgba(0,0,0,0.07);
+      border-radius: 12px;
+      font-size: 14px; font-weight: 400; font-family: inherit;
+      color: var(--text-primary);
+      outline: none;
+      transition: border-color 0.2s ease, background 0.2s ease, box-shadow 0.2s ease;
+    }
+    .search-input::placeholder { color: #bbb; }
+    .search-input:focus {
+      border-color: rgba(0,0,0,0.18);
+      background: #fff;
+      box-shadow: 0 0 0 3px rgba(0,0,0,0.04);
+    }
+    .search-clear-btn {
+      position: absolute; right: 10px;
+      background: rgba(0,0,0,0.07); border: none;
+      border-radius: 50%; width: 18px; height: 18px;
+      display: flex; align-items: center; justify-content: center;
+      cursor: pointer; color: var(--text-secondary);
+      transition: background 0.15s ease;
+      padding: 0;
+    }
+    .search-clear-btn:hover { background: rgba(0,0,0,0.13); color: var(--text-primary); }
+
+    .search-status {
+      display: flex; align-items: center; gap: 8px;
+      padding: 10px 4px 2px 4px;
+      font-size: 12px; color: var(--text-secondary);
+    }
+    .search-spinner {
+      width: 12px; height: 12px; border-radius: 50%;
+      border: 1.5px solid rgba(0,0,0,0.1);
+      border-top-color: var(--text-secondary);
+      animation: spin 0.7s linear infinite;
+      display: inline-block; flex-shrink: 0;
+    }
+
+    .search-results {
+      margin-top: 8px;
+      background: rgba(255,255,255,0.8);
+      border: 1px solid rgba(0,0,0,0.07);
+      border-radius: 14px;
+      overflow: hidden;
+    }
+    .search-result-item {
+      display: flex; align-items: center; gap: 12px;
+      padding: 10px 12px;
+      border-bottom: 1px solid rgba(0,0,0,0.04);
+      transition: background 0.15s ease;
+    }
+    .search-result-item:last-child { border-bottom: none; }
+    .search-result-item:hover { background: rgba(0,0,0,0.02); }
+    .search-result-name {
+      font-size: 14px; font-weight: 600; color: var(--text-primary); flex: 1;
+      white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+    }
+
+    .add-friend-btn {
+      display: inline-flex; align-items: center; gap: 5px;
+      padding: 6px 11px; border-radius: 20px;
+      background: var(--text-primary); color: var(--bg-colour);
+      border: none; font-size: 12px; font-weight: 600; font-family: inherit;
+      cursor: pointer; flex-shrink: 0;
+      box-shadow: 0 2px 8px rgba(0,0,0,0.12);
+      transition: background 0.2s ease, box-shadow 0.2s ease;
+    }
+    .add-friend-btn:hover { background: #1a1a1a; box-shadow: 0 4px 12px rgba(0,0,0,0.2); }
+
+    .search-result-badge {
+      display: inline-flex; align-items: center; gap: 4px;
+      padding: 5px 10px; border-radius: 20px;
+      font-size: 11px; font-weight: 600; flex-shrink: 0;
+    }
+    .badge--connected {
+      background: rgba(0,0,0,0.05); color: var(--text-secondary);
+      border: 1px solid rgba(0,0,0,0.08);
+    }
+    .badge--sent {
+      background: rgba(0,0,0,0.04); color: var(--text-secondary);
+      border: 1px solid rgba(0,0,0,0.06);
+    }
+
+    .search-error {
+      font-size: 12px; color: #c0392b; margin: 8px 0 0 0;
+      padding: 8px 10px; background: rgba(192,57,43,0.05);
+      border-radius: 8px; border: 1px solid rgba(192,57,43,0.1);
+    }
+    .search-empty {
+      font-size: 12px; color: var(--text-secondary);
+      margin: 8px 0 0 0; padding: 8px 4px;
+      font-style: italic;
+    }
+
+    /* ── Section labels ── */
+    .section-label {
+      display: flex; align-items: center; gap: 8px;
+      font-size: 10px; font-weight: 700; letter-spacing: 0.08em;
+      text-transform: uppercase; color: var(--text-secondary);
+      padding: 10px 12px 6px 12px;
+    }
+    .requests-badge {
+      display: inline-flex; align-items: center; justify-content: center;
+      width: 16px; height: 16px; border-radius: 50%;
+      background: var(--text-primary); color: var(--bg-colour);
+      font-size: 9px; font-weight: 800; letter-spacing: 0;
+    }
+
+    /* ── Incoming requests ── */
+    .requests-section { margin-bottom: 4px; }
+    .request-item {
+      display: flex; align-items: center; gap: 12px;
+      padding: 10px 12px; border-radius: 14px;
+      margin-bottom: 2px;
+      background: rgba(0,0,0,0.02);
+      border: 1px solid rgba(0,0,0,0.05);
+      overflow: hidden;
+    }
+    .request-item--accepted {
+      background: rgba(0,0,0,0.01);
+      border-color: rgba(0,0,0,0.03);
+    }
+    .request-info { display: flex; flex-direction: column; gap: 2px; flex: 1; min-width: 0; }
+    .request-name { font-size: 14px; font-weight: 600; color: var(--text-primary); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+    .request-sub { font-size: 11px; color: var(--text-secondary); }
+    .request-actions { display: flex; align-items: center; gap: 6px; flex-shrink: 0; }
+    .request-btn {
+      width: 30px; height: 30px; border-radius: 50%;
+      display: flex; align-items: center; justify-content: center;
+      border: none; cursor: pointer;
+      transition: background 0.15s ease, box-shadow 0.15s ease;
+    }
+    .request-btn--accept {
+      background: var(--text-primary); color: var(--bg-colour);
+      box-shadow: 0 2px 8px rgba(0,0,0,0.14);
+    }
+    .request-btn--accept:hover { background: #1a1a1a; box-shadow: 0 4px 12px rgba(0,0,0,0.22); }
+    .request-btn--decline {
+      background: rgba(0,0,0,0.06); color: var(--text-secondary);
+    }
+    .request-btn--decline:hover { background: rgba(0,0,0,0.12); color: var(--text-primary); }
 
     /* ── Setup screen ── */
     .setup-container {
@@ -1001,227 +1346,61 @@ const App = () => {
       padding: max(40px, env(safe-area-inset-top)) 24px max(32px, env(safe-area-inset-bottom)) 24px;
       overflow-y: auto; overflow-x: hidden;
     }
-
-    /* Decorative ambient ring behind the card */
     .auth-ring {
-      position: absolute;
-      width: 520px; height: 520px;
-      border-radius: 50%;
-      border: 1px solid rgba(0,0,0,0.06);
-      top: 50%; left: 50%;
-      transform: translate(-50%, -50%);
-      pointer-events: none;
+      position: absolute; width: 520px; height: 520px; border-radius: 50%;
+      border: 1px solid rgba(0,0,0,0.06); top: 50%; left: 50%;
+      transform: translate(-50%, -50%); pointer-events: none;
       animation: authRingPulse 6s ease-in-out infinite;
     }
-    .auth-ring::before {
-      content: '';
-      position: absolute;
-      inset: 40px;
-      border-radius: 50%;
-      border: 1px solid rgba(0,0,0,0.04);
-      animation: authRingPulse 6s ease-in-out infinite 1.5s;
-    }
-    .auth-ring::after {
-      content: '';
-      position: absolute;
-      inset: 90px;
-      border-radius: 50%;
-      border: 1px solid rgba(0,0,0,0.03);
-      animation: authRingPulse 6s ease-in-out infinite 3s;
-    }
+    .auth-ring::before { content: ''; position: absolute; inset: 40px; border-radius: 50%; border: 1px solid rgba(0,0,0,0.04); animation: authRingPulse 6s ease-in-out infinite 1.5s; }
+    .auth-ring::after { content: ''; position: absolute; inset: 90px; border-radius: 50%; border: 1px solid rgba(0,0,0,0.03); animation: authRingPulse 6s ease-in-out infinite 3s; }
     .auth-ring--register { animation-delay: -2s; }
-
     @keyframes authRingPulse {
       0%, 100% { transform: translate(-50%, -50%) scale(1); opacity: 1; }
       50% { transform: translate(-50%, -50%) scale(1.04); opacity: 0.6; }
     }
-
-    .auth-wordmark {
-      font-size: 13px; font-weight: 800; letter-spacing: 0.35em;
-      color: var(--text-primary); margin-bottom: 32px;
-      position: relative; z-index: 2;
-    }
-
-    .auth-card {
-      width: 100%; max-width: 400px;
-      background: rgba(255,255,255,0.9);
-      backdrop-filter: blur(24px); -webkit-backdrop-filter: blur(24px);
-      border: 1px solid rgba(0,0,0,0.07);
-      border-radius: 24px;
-      padding: 32px;
-      box-shadow: 0 8px 48px rgba(0,0,0,0.06), 0 1px 2px rgba(0,0,0,0.04);
-      position: relative; z-index: 2;
-    }
-
+    .auth-wordmark { font-size: 13px; font-weight: 800; letter-spacing: 0.35em; color: var(--text-primary); margin-bottom: 32px; position: relative; z-index: 2; }
+    .auth-card { width: 100%; max-width: 400px; background: rgba(255,255,255,0.9); backdrop-filter: blur(24px); -webkit-backdrop-filter: blur(24px); border: 1px solid rgba(0,0,0,0.07); border-radius: 24px; padding: 32px; box-shadow: 0 8px 48px rgba(0,0,0,0.06), 0 1px 2px rgba(0,0,0,0.04); position: relative; z-index: 2; }
     .auth-card-header { margin-bottom: 28px; }
     .auth-title { font-size: 26px; font-weight: 800; letter-spacing: -0.03em; margin: 0 0 6px 0; color: var(--text-primary); }
     .auth-sub { font-size: 14px; color: var(--text-secondary); margin: 0; }
-
-    .auth-back-btn {
-      display: inline-flex; align-items: center; gap: 6px;
-      background: transparent; border: none; padding: 0 0 16px 0;
-      color: var(--text-secondary); font-size: 13px; font-weight: 500;
-      cursor: pointer; transition: color 0.2s ease;
-    }
+    .auth-back-btn { display: inline-flex; align-items: center; gap: 6px; background: transparent; border: none; padding: 0 0 16px 0; color: var(--text-secondary); font-size: 13px; font-weight: 500; cursor: pointer; transition: color 0.2s ease; }
     .auth-back-btn:hover { color: var(--text-primary); }
-
     .auth-fields { display: flex; flex-direction: column; gap: 16px; margin-bottom: 8px; }
-
     .auth-field { display: flex; flex-direction: column; gap: 7px; }
     .auth-label { font-size: 12px; font-weight: 600; letter-spacing: 0.04em; text-transform: uppercase; color: var(--text-secondary); }
-
     .auth-input-wrapper { position: relative; }
-    .auth-input {
-      width: 100%; padding: 13px 16px;
-      background: rgba(0,0,0,0.03);
-      border: 1px solid rgba(0,0,0,0.08);
-      border-radius: 12px;
-      font-size: 15px; font-weight: 400;
-      color: var(--text-primary);
-      font-family: inherit;
-      outline: none;
-      transition: border-color 0.2s ease, box-shadow 0.2s ease, background 0.2s ease;
-    }
+    .auth-input { width: 100%; padding: 13px 16px; background: rgba(0,0,0,0.03); border: 1px solid rgba(0,0,0,0.08); border-radius: 12px; font-size: 15px; font-weight: 400; color: var(--text-primary); font-family: inherit; outline: none; transition: border-color 0.2s ease, box-shadow 0.2s ease, background 0.2s ease; }
     .auth-input::placeholder { color: #bbb; }
-    .auth-input:focus {
-      border-color: rgba(0,0,0,0.2);
-      background: #fff;
-      box-shadow: 0 0 0 3px rgba(0,0,0,0.04);
-    }
-
-    .auth-eye-btn {
-      position: absolute; right: 14px; top: 50%; transform: translateY(-50%);
-      background: transparent; border: none; color: var(--text-secondary);
-      cursor: pointer; display: flex; align-items: center; padding: 4px;
-      border-radius: 6px; transition: color 0.2s ease;
-    }
+    .auth-input:focus { border-color: rgba(0,0,0,0.2); background: #fff; box-shadow: 0 0 0 3px rgba(0,0,0,0.04); }
+    .auth-eye-btn { position: absolute; right: 14px; top: 50%; transform: translateY(-50%); background: transparent; border: none; color: var(--text-secondary); cursor: pointer; display: flex; align-items: center; padding: 4px; border-radius: 6px; transition: color 0.2s ease; }
     .auth-eye-btn:hover { color: var(--text-primary); }
-
-    .auth-error {
-      font-size: 13px; color: #c0392b; font-weight: 500;
-      margin: 8px 0 4px 0; padding: 10px 14px;
-      background: rgba(192,57,43,0.06); border-radius: 10px;
-      border: 1px solid rgba(192,57,43,0.12);
-    }
-
-    .auth-submit-btn {
-      width: 100%; margin-top: 20px; padding: 15px;
-      background: var(--text-primary); color: var(--bg-colour);
-      border: none; border-radius: 14px;
-      font-size: 15px; font-weight: 700; font-family: inherit;
-      cursor: pointer; letter-spacing: 0.01em;
-      box-shadow: 0 6px 20px rgba(0,0,0,0.14);
-      transition: background 0.2s ease, box-shadow 0.25s ease, transform 0.15s ease;
-      display: flex; align-items: center; justify-content: center; min-height: 52px;
-    }
+    .auth-error { font-size: 13px; color: #c0392b; font-weight: 500; margin: 8px 0 4px 0; padding: 10px 14px; background: rgba(192,57,43,0.06); border-radius: 10px; border: 1px solid rgba(192,57,43,0.12); }
+    .auth-submit-btn { width: 100%; margin-top: 20px; padding: 15px; background: var(--text-primary); color: var(--bg-colour); border: none; border-radius: 14px; font-size: 15px; font-weight: 700; font-family: inherit; cursor: pointer; letter-spacing: 0.01em; box-shadow: 0 6px 20px rgba(0,0,0,0.14); transition: background 0.2s ease, box-shadow 0.25s ease, transform 0.15s ease; display: flex; align-items: center; justify-content: center; min-height: 52px; }
     .auth-submit-btn:hover { background: #1a1a1a; box-shadow: 0 10px 28px rgba(0,0,0,0.2); }
     .auth-submit-btn:disabled { opacity: 0.7; cursor: not-allowed; }
-
-    .auth-spinner {
-      width: 18px; height: 18px; border-radius: 50%;
-      border: 2px solid rgba(255,255,255,0.3);
-      border-top-color: #fff;
-      animation: spin 0.7s linear infinite;
-      display: inline-block;
-    }
+    .auth-spinner { width: 18px; height: 18px; border-radius: 50%; border: 2px solid rgba(255,255,255,0.3); border-top-color: #fff; animation: spin 0.7s linear infinite; display: inline-block; }
     @keyframes spin { to { transform: rotate(360deg); } }
-
-    .auth-divider {
-      display: flex; align-items: center; gap: 12px;
-      margin: 20px 0 4px;
-    }
+    .auth-divider { display: flex; align-items: center; gap: 12px; margin: 20px 0 4px; }
     .auth-divider span { flex: 1; height: 1px; background: rgba(0,0,0,0.07); }
     .auth-divider p { font-size: 12px; color: var(--text-secondary); font-weight: 500; margin: 0; }
-
-    .auth-secondary-btn {
-      width: 100%; margin-top: 12px; padding: 14px;
-      background: transparent; color: var(--text-primary);
-      border: 1px solid rgba(0,0,0,0.1); border-radius: 14px;
-      font-size: 15px; font-weight: 600; font-family: inherit;
-      cursor: pointer; transition: background 0.2s ease, border-color 0.2s ease;
-    }
+    .auth-secondary-btn { width: 100%; margin-top: 12px; padding: 14px; background: transparent; color: var(--text-primary); border: 1px solid rgba(0,0,0,0.1); border-radius: 14px; font-size: 15px; font-weight: 600; font-family: inherit; cursor: pointer; transition: background 0.2s ease, border-color 0.2s ease; }
     .auth-secondary-btn:hover { background: rgba(0,0,0,0.03); border-color: rgba(0,0,0,0.18); }
-
-    .auth-legal {
-      font-size: 11px; color: var(--text-secondary); text-align: center;
-      margin-top: 24px; max-width: 280px; line-height: 1.6;
-      position: relative; z-index: 2;
-    }
+    .auth-legal { font-size: 11px; color: var(--text-secondary); text-align: center; margin-top: 24px; max-width: 280px; line-height: 1.6; position: relative; z-index: 2; }
 
     /* ── Daily Summary Prompt ── */
-    .summary-backdrop {
-      position: absolute; inset: 0; z-index: 60;
-      display: flex; align-items: flex-end; justify-content: center;
-      padding-bottom: max(120px, calc(env(safe-area-inset-bottom) + 100px));
-      background: rgba(250, 250, 250, 0.5);
-      backdrop-filter: blur(6px); -webkit-backdrop-filter: blur(6px);
-      pointer-events: all;
-    }
-
-    .summary-card {
-      position: relative; overflow: hidden;
-      width: calc(100% - 48px); max-width: 360px;
-      background: rgba(255, 255, 255, 0.92);
-      backdrop-filter: blur(28px); -webkit-backdrop-filter: blur(28px);
-      border: 1px solid rgba(0, 0, 0, 0.07);
-      border-radius: 28px;
-      padding: 32px 28px 28px;
-      box-shadow: 0 24px 64px rgba(0,0,0,0.10), 0 2px 4px rgba(0,0,0,0.04);
-      display: flex; flex-direction: column; align-items: center;
-      text-align: center; gap: 0;
-    }
-
-    .summary-ring {
-      position: absolute; top: -60px; right: -60px;
-      width: 180px; height: 180px; border-radius: 50%;
-      border: 1px solid rgba(0,0,0,0.05);
-      pointer-events: none;
-    }
-    .summary-ring::before {
-      content: ''; position: absolute; inset: 24px;
-      border-radius: 50%; border: 1px solid rgba(0,0,0,0.04);
-    }
-
-    .summary-icon {
-      width: 52px; height: 52px; border-radius: 50%;
-      background: var(--text-primary);
-      color: var(--bg-colour);
-      display: flex; align-items: center; justify-content: center;
-      margin-bottom: 18px;
-      box-shadow: 0 8px 20px rgba(0,0,0,0.16);
-    }
-
-    .summary-title {
-      font-size: 18px; font-weight: 800; letter-spacing: -0.025em;
-      color: var(--text-primary); margin: 0 0 8px 0;
-    }
-
-    .summary-body {
-      font-size: 14px; color: var(--text-secondary);
-      line-height: 1.55; margin: 0 0 24px 0; max-width: 240px;
-    }
-
-    .summary-actions {
-      display: flex; flex-direction: column; gap: 10px; width: 100%;
-    }
-
-    .summary-btn {
-      width: 100%; padding: 14px;
-      border-radius: 14px; font-size: 15px; font-weight: 600;
-      font-family: inherit; cursor: pointer;
-      border: none; transition: box-shadow 0.2s ease, background 0.2s ease;
-    }
-
-    .summary-btn--yes {
-      background: var(--text-primary); color: var(--bg-colour);
-      box-shadow: 0 6px 18px rgba(0,0,0,0.14);
-    }
+    .summary-backdrop { position: absolute; inset: 0; z-index: 60; display: flex; align-items: flex-end; justify-content: center; padding-bottom: max(120px, calc(env(safe-area-inset-bottom) + 100px)); background: rgba(250, 250, 250, 0.5); backdrop-filter: blur(6px); -webkit-backdrop-filter: blur(6px); pointer-events: all; }
+    .summary-card { position: relative; overflow: hidden; width: calc(100% - 48px); max-width: 360px; background: rgba(255, 255, 255, 0.92); backdrop-filter: blur(28px); -webkit-backdrop-filter: blur(28px); border: 1px solid rgba(0, 0, 0, 0.07); border-radius: 28px; padding: 32px 28px 28px; box-shadow: 0 24px 64px rgba(0,0,0,0.10), 0 2px 4px rgba(0,0,0,0.04); display: flex; flex-direction: column; align-items: center; text-align: center; gap: 0; }
+    .summary-ring { position: absolute; top: -60px; right: -60px; width: 180px; height: 180px; border-radius: 50%; border: 1px solid rgba(0,0,0,0.05); pointer-events: none; }
+    .summary-ring::before { content: ''; position: absolute; inset: 24px; border-radius: 50%; border: 1px solid rgba(0,0,0,0.04); }
+    .summary-icon { width: 52px; height: 52px; border-radius: 50%; background: var(--text-primary); color: var(--bg-colour); display: flex; align-items: center; justify-content: center; margin-bottom: 18px; box-shadow: 0 8px 20px rgba(0,0,0,0.16); }
+    .summary-title { font-size: 18px; font-weight: 800; letter-spacing: -0.025em; color: var(--text-primary); margin: 0 0 8px 0; }
+    .summary-body { font-size: 14px; color: var(--text-secondary); line-height: 1.55; margin: 0 0 24px 0; max-width: 240px; }
+    .summary-actions { display: flex; flex-direction: column; gap: 10px; width: 100%; }
+    .summary-btn { width: 100%; padding: 14px; border-radius: 14px; font-size: 15px; font-weight: 600; font-family: inherit; cursor: pointer; border: none; transition: box-shadow 0.2s ease, background 0.2s ease; }
+    .summary-btn--yes { background: var(--text-primary); color: var(--bg-colour); box-shadow: 0 6px 18px rgba(0,0,0,0.14); }
     .summary-btn--yes:hover { background: #1a1a1a; box-shadow: 0 10px 24px rgba(0,0,0,0.22); }
-
-    .summary-btn--no {
-      background: transparent; color: var(--text-secondary);
-      border: 1px solid rgba(0,0,0,0.08);
-    }
+    .summary-btn--no { background: transparent; color: var(--text-secondary); border: 1px solid rgba(0,0,0,0.08); }
     .summary-btn--no:hover { background: rgba(0,0,0,0.03); color: var(--text-primary); border-color: rgba(0,0,0,0.14); }
   `;
 
@@ -1229,19 +1408,10 @@ const App = () => {
     <>
       <style>{styles}</style>
       <div className="app-wrapper">
-        {/* Boot splash */}
         <AnimatePresence>
           {appState === 'booting' && (
-            <motion.div
-              className="loading-screen"
-              exit={{ opacity: 0, scale: 1.1, filter: 'blur(20px)', transition: { duration: 1.2, ease: "easeInOut" } }}
-            >
-              <motion.div
-                initial={{ opacity: 0, scale: 0.9, filter: 'blur(10px)' }}
-                animate={{ opacity: 1, scale: 1, filter: 'blur(0px)' }}
-                transition={{ duration: 1.5, ease: "easeOut" }}
-                className="loading-text"
-              >
+            <motion.div className="loading-screen" exit={{ opacity: 0, scale: 1.1, filter: 'blur(20px)', transition: { duration: 1.2, ease: "easeInOut" } }}>
+              <motion.div initial={{ opacity: 0, scale: 0.9, filter: 'blur(10px)' }} animate={{ opacity: 1, scale: 1, filter: 'blur(0px)' }} transition={{ duration: 1.5, ease: "easeOut" }} className="loading-text">
                 E C H O
               </motion.div>
             </motion.div>
@@ -1249,52 +1419,30 @@ const App = () => {
         </AnimatePresence>
 
         <div className="main-app">
-
-          {/* Auth pages live outside the header/nav shell */}
           <AnimatePresence mode="wait">
             {appState === 'login' && (
-              <LoginScreen
-                key="login"
-                onLogin={handleLogin}
-                onGoToRegister={() => setAppState('register')}
-              />
+              <LoginScreen key="login" onLogin={handleLogin} onGoToRegister={() => setAppState('register')} />
             )}
             {appState === 'register' && (
-              <RegisterScreen
-                key="register"
-                onRegister={handleRegister}
-                onGoToLogin={() => setAppState('login')}
-              />
+              <RegisterScreen key="register" onRegister={handleRegister} onGoToLogin={() => setAppState('login')} />
             )}
           </AnimatePresence>
 
-          {/* App chrome — only shown post-auth */}
           {(appState === 'setup' || appState === 'main') && (
             <>
               <header className="top-header">
-                <MagneticButton
-                  className="header-icon"
-                  ariaLabel="Menu"
-                  hoverScale={1.1}
-                  onClick={() => setIsFriendsListOpen(true)}
-                >
+                <MagneticButton className="header-icon" ariaLabel="Menu" hoverScale={1.1} onClick={() => setIsFriendsListOpen(true)}>
                   <Menu size={20} color="var(--text-primary)" strokeWidth={1.5} />
                 </MagneticButton>
                 <motion.h1 className="logo-text" initial={{ y: -20, opacity: 0 }} animate={{ y: 0, opacity: 1 }} transition={{ duration: 0.5 }}>
                   {currentUser ? currentUser.username : 'Echo'}
                 </motion.h1>
-                <MagneticButton
-                  className="header-icon"
-                  ariaLabel="Log out"
-                  hoverScale={1.1}
-                  onClick={handleLogout}
-                >
+                <MagneticButton className="header-icon" ariaLabel="Log out" hoverScale={1.1} onClick={handleLogout}>
                   <LogOut size={18} color="var(--text-primary)" strokeWidth={1.5} />
                 </MagneticButton>
               </header>
 
               <main className="content-area">
-                {/* Background 3D canvas */}
                 <div className="canvas-wrapper" onClick={appState === 'main' && activeTab === 'voice' ? toggleListening : undefined}>
                   <Canvas camera={{ position: [0, 0, 5], fov: 40 }} dpr={[1, Math.min(2, window.devicePixelRatio)]}>
                     <color attach="background" args={['#fafafa']} />
@@ -1321,14 +1469,7 @@ const App = () => {
                   )}
 
                   {appState === 'main' && activeTab === 'forum' && (
-                    <motion.div
-                      key="forum-view"
-                      className="forum-placeholder"
-                      initial={{ opacity: 0, y: 20 }}
-                      animate={{ opacity: 1, y: 0 }}
-                      exit={{ opacity: 0, y: -20 }}
-                      transition={{ duration: 0.4, ease: "easeInOut" }}
-                    >
+                    <motion.div key="forum-view" className="forum-placeholder" initial={{ opacity: 0, y: 20 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0, y: -20 }} transition={{ duration: 0.4, ease: "easeInOut" }}>
                       <MessageSquare size={48} color="var(--text-secondary)" strokeWidth={1} />
                       <h2>Community Forum</h2>
                       <p>Discussions will appear here.</p>
@@ -1350,16 +1491,9 @@ const App = () => {
                           {isListening ? "Listening..." : "Tap anywhere to capture"}
                         </motion.div>
                       </AnimatePresence>
-
                       <AnimatePresence>
                         {transcript && (
-                          <motion.div
-                            key="transcript-view"
-                            initial={{ opacity: 0, y: 20 }}
-                            animate={{ opacity: 1, y: 0 }}
-                            exit={{ opacity: 0, y: -20 }}
-                            className="transcript-container"
-                          >
+                          <motion.div key="transcript-view" initial={{ opacity: 0, y: 20 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0, y: -20 }} className="transcript-container">
                             <p className="transcript-text">"{transcript}"</p>
                           </motion.div>
                         )}
@@ -1375,9 +1509,10 @@ const App = () => {
                   onClose={() => setIsFriendsListOpen(false)}
                   onSelectFriend={handleSelectFriendFromList}
                   selectedFriendId={selectedFriendId}
+                  currentUser={currentUser}
+                  onFriendAdded={handleRefreshFriends}
                 />
 
-                {/* Daily summary prompt — floats above everything */}
                 {showSummaryPrompt && (
                   <DailySummaryPrompt
                     onYes={() => setShowSummaryPrompt(false)}
@@ -1388,12 +1523,7 @@ const App = () => {
 
               <AnimatePresence>
                 {appState === 'main' && (
-                  <motion.div
-                    className="bottom-nav-wrapper"
-                    initial={{ y: 100, opacity: 0 }}
-                    animate={{ y: 0, opacity: 1 }}
-                    transition={{ type: "spring", stiffness: 250, damping: 22 }}
-                  >
+                  <motion.div className="bottom-nav-wrapper" initial={{ y: 100, opacity: 0 }} animate={{ y: 0, opacity: 1 }} transition={{ type: "spring", stiffness: 250, damping: 22 }}>
                     <nav className="bottom-nav">
                       <MagneticButton isActive={activeTab === 'voice'} className="nav-item" ariaLabel="Voice Hub" hoverScale={1.15} onClick={() => setActiveTab('voice')}>
                         <Mic size={22} strokeWidth={2} />
