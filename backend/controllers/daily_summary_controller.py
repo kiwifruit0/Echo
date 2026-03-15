@@ -16,8 +16,8 @@ async def collate_summaries(user):
     combined_audio = AudioSegment.empty()
 
     intro_generator = output_speech(None, "Here's what your friends are up to")
-    intro_bytes = b"".join(intro_generator)
-    combined_audio += AudioSegment.from_file(io.BytesIO(intro_bytes), format="ogg")
+   
+    combined_audio += AudioSegment.from_file(intro_generator)
 
     for entry in summaries:
         print(entry)
@@ -26,7 +26,7 @@ async def collate_summaries(user):
         if not note:
             print("No daily note found for" , name)
             continue
-        
+        notes_text = " ".join(note.get("content", "") for note in notes)
         try:
             intro_generator = output_speech(None, f"{name} says")
             intro_bytes = b"".join(intro_generator)
