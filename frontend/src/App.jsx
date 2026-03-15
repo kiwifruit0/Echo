@@ -1412,7 +1412,7 @@ const App = () => {
   const recordingTimerRef = useRef(null);
   const recordingStartRef = useRef(null);
   const [recordingSeconds, setRecordingSeconds] = useState(0);
-  const [recordingMode, setRecordingMode] = useState(null); // 'daily-note' | 'ask-question' | null
+  const [recordingMode, setRecordingMode] = useState(null); // 'daily-note' | 'ask-question' | 'answer-question' | null
 
   useEffect(() => {
     currentUserRef.current = currentUser;
@@ -1982,6 +1982,79 @@ const App = () => {
     }
   }, [promptActionChoice, speakThenAct, transcribeAudioBlob]);
 
+  const startAnswerQuestionRecording = useCallback(async (postId) => {
+    try {
+      setRecordingMode('answer-question');
+      const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+      recordingChunksRef.current = [];
+
+      const mimeType = MediaRecorder.isTypeSupported('audio/ogg;codecs=opus')
+        ? 'audio/ogg;codecs=opus'
+        : MediaRecorder.isTypeSupported('audio/webm;codecs=opus')
+        ? 'audio/webm;codecs=opus'
+        : 'audio/webm';
+
+      const mr = new MediaRecorder(stream, { mimeType });
+      mediaRecorderRef2.current = mr;
+
+      mr.ondataavailable = (e) => { if (e.data.size > 0) recordingChunksRef.current.push(e.data); };
+      mr.onstop = async () => {
+        stream.getTracks().forEach(t => t.stop());
+        try {
+          setRecordingPhase('processing');
+          const ext = mimeType.includes('ogg') ? '.ogg' : '.webm';
+          const blob = new Blob(recordingChunksRef.current, { type: mimeType });
+          const transcription = await transcribeAudioBlob(blob, `forum-answer${ext}`);
+          if (!transcription) throw new Error('No transcription captured');
+
+          const username = currentUserRef.current?.username;
+          if (!username) throw new Error('No active user');
+
+          setRecordingPhase('uploading');
+          const res = await fetch(
+            `${FORUM_BASE}/answer_question/${encodeURIComponent(username)}/${encodeURIComponent(postId)}`,
+            {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({
+                transcriptText: transcription,
+                transcriptMeta: { source: 'voice' },
+              }),
+            }
+          );
+          if (!res.ok) {
+            const errText = await res.text();
+            throw new Error(`Answer question failed: ${res.status} ${errText}`);
+          }
+
+          setRecordingPhase('done');
+          await speakThenAct("Thanks, your answer has been posted.", () => {
+            setRecordingPhase(null);
+            setRecordingMode(null);
+            promptActionChoice();
+          });
+        } catch (err) {
+          console.warn('Answer question flow failed:', err);
+          setRecordingPhase(null);
+          setRecordingMode(null);
+          promptActionChoice();
+        }
+      };
+
+      mr.start(100);
+      recordingStartRef.current = Date.now();
+      setRecordingPhase('recording');
+      setRecordingSeconds(0);
+      recordingTimerRef.current = setInterval(() => {
+        setRecordingSeconds(Math.floor((Date.now() - recordingStartRef.current) / 1000));
+      }, 500);
+    } catch (err) {
+      console.warn('Mic failed:', err);
+      setRecordingPhase(null);
+      setRecordingMode(null);
+    }
+  }, [promptActionChoice, speakThenAct, transcribeAudioBlob]);
+
   // ── 5. handleSummaryYes (depends on promptActionChoice) ──────────────────────
   const handleSummaryYes = useCallback(async () => {
     const user = currentUserRef.current;
@@ -2014,7 +2087,36 @@ const App = () => {
         () => startAskQuestionRecording()
       );
     } else if (trimmed.includes('2') || trimmed.includes('answer a question')) {
-      await speakThenAct("Okay, I'll find a question for you to answer.", () => { /* answer flow */ });
+      const username = currentUserRef.current?.username;
+      if (!username) {
+        await speakThenAct("I couldn't identify your account right now.", () => promptActionChoice());
+        return;
+      }
+      try {
+        const res = await fetch(`${FORUM_BASE}/get_question/${encodeURIComponent(username)}`);
+        if (!res.ok) {
+          const errText = await res.text();
+          throw new Error(`Get question failed: ${res.status} ${errText}`);
+        }
+        const payload = await res.json();
+        const question = payload?.question;
+        const postId = question?.id;
+        const questionText = question?.questionText;
+
+        if (!postId || !questionText) {
+          const msg = payload?.message || "I couldn't find a question for you right now.";
+          await speakThenAct(msg, () => promptActionChoice());
+          return;
+        }
+
+        await speakThenAct(
+          `Okay, here's a question: ${questionText}. Press done when you're finished answering.`,
+          () => startAnswerQuestionRecording(postId)
+        );
+      } catch (err) {
+        console.warn('Fetching forum question failed:', err);
+        await speakThenAct("I couldn't load a question right now.", () => promptActionChoice());
+      }
     } else if (trimmed.includes('3') || trimmed.includes('record')) {
       await speakThenAct(
         "What was your day like? Take your time, and when you're done just click the done button.",
@@ -2028,7 +2130,7 @@ const App = () => {
         () => listenForActionChoiceRef.current?.()
       );
     }
-  }, [speakThenAct, handleSummaryYes, startAskQuestionRecording, startDailyRecording]);
+  }, [speakThenAct, handleSummaryYes, promptActionChoice, startAnswerQuestionRecording, startAskQuestionRecording, startDailyRecording]);
 
   // ── 7. handleGeneralisedChoice (depends on speakThenAct + handleSummaryYes + promptActionChoice) ──
   const handleGeneralisedChoice = useCallback(async (choice) => {
@@ -2761,8 +2863,20 @@ const App = () => {
                                     {`${String(Math.floor(recordingSeconds / 60)).padStart(2, '0')}:${String(recordingSeconds % 60).padStart(2, '0')}`}
                                   </span>
                                 )}
-                                {recordingPhase === 'uploading' && (recordingMode === 'ask-question' ? "Posting your question…" : "Saving your note…")}
-                                {recordingPhase === 'processing' && (recordingMode === 'ask-question' ? "Transcribing your question…" : "Processing…")}
+                                {recordingPhase === 'uploading' && (
+                                  recordingMode === 'ask-question'
+                                    ? "Posting your question…"
+                                    : recordingMode === 'answer-question'
+                                    ? "Posting your answer…"
+                                    : "Saving your note…"
+                                )}
+                                {recordingPhase === 'processing' && (
+                                  recordingMode === 'ask-question'
+                                    ? "Transcribing your question…"
+                                    : recordingMode === 'answer-question'
+                                    ? "Transcribing your answer…"
+                                    : "Processing…"
+                                )}
                               </motion.p>
                             </AnimatePresence>
 
