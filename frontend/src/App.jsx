@@ -416,9 +416,6 @@ const UserSearchSection = ({ currentUser, friends, onFriendAdded }) => {
 };
 
 // --- 5. Incoming Friend Requests Section ---
-// Fetches via GET /db/friendships/pending?incomingUsername=<username>
-// Accepts via POST /db/friendships/accept { requestingUsername, incomingUsername }
-// Denies  via POST /db/friendships/deny  { requestingUsername, incomingUsername }
 const IncomingRequestsSection = ({ currentUser, onAccept }) => {
   const [requests, setRequests] = useState([]);
   const [loading, setLoading] = useState(false);
@@ -1427,6 +1424,39 @@ const App = () => {
   const isListening = conversation.status === 'connected';
   const audioRef = useRef(null); 
 
+  const signedUrlRef = useRef(null);
+  const signedUrlExpiryRef = useRef(null);
+  const micStreamRef = useRef(null);
+
+  const prefetchSignedUrl = useCallback(async () => {
+    try {
+      const response = await fetch('http://127.0.0.1:8000/envs/elevenlabs');
+      if (!response.ok) return;
+      const data = await response.json();
+      signedUrlRef.current = data.signedUrl;
+      signedUrlExpiryRef.current = Date.now() + 55_000;
+    } catch (err) {
+      console.warn('Prefetch failed:', err);
+    }
+  }, []);
+  
+  const warmMic = useCallback(async () => {
+    try {
+      const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+      micStreamRef.current = stream;
+    } catch (err) {
+      console.warn('Mic warm-up failed:', err);
+    }
+  }, []);
+
+  useEffect(() => {
+    if (appState === 'main') {
+      prefetchSignedUrl();
+      warmMic();
+    }
+    return () => micStreamRef.current?.getTracks().forEach(t => t.stop());
+  }, [appState, prefetchSignedUrl, warmMic]);
+
   const toggleListening = useCallback(async () => {
     if (isListening) {
       await conversation.endSession();
@@ -1435,14 +1465,32 @@ const App = () => {
       }
     } else {
       try {
-        const response = await fetch('http://127.0.0.1:8000/envs/elevenlabs');
-        if (!response.ok) { const errData = await response.json(); throw new Error(errData.detail || "Backend failed"); }
-        const data = await response.json();
-        const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+        const [stream, signedUrl] = await Promise.all([
+          micStreamRef.current
+            ? Promise.resolve(micStreamRef.current)
+            : navigator.mediaDevices.getUserMedia({ audio: true }),
+          (async () => {
+            if (signedUrlRef.current && Date.now() < signedUrlExpiryRef.current) {
+              return signedUrlRef.current;
+            }
+            const response = await fetch('http://127.0.0.1:8000/envs/elevenlabs');
+            if (!response.ok) {
+              const errData = await response.json();
+              throw new Error(errData.detail || 'Backend failed');
+            }
+            const data = await response.json();
+            signedUrlRef.current = data.signedUrl;
+            signedUrlExpiryRef.current = Date.now() + 55_000;
+            return data.signedUrl;
+          })(),
+        ]);
+  
         audioChunksRef.current = [];
         const mediaRecorder = new MediaRecorder(stream);
         mediaRecorderRef.current = mediaRecorder;
-        mediaRecorder.ondataavailable = (event) => { if (event.data.size > 0) audioChunksRef.current.push(event.data); };
+        mediaRecorder.ondataavailable = (event) => {
+          if (event.data.size > 0) audioChunksRef.current.push(event.data);
+        };
         mediaRecorder.onstop = async () => {
           const audioBlob = new Blob(audioChunksRef.current, { type: 'audio/webm' });
           try {
@@ -1454,15 +1502,17 @@ const App = () => {
               headers: { 'xi-api-key': import.meta.env.VITE_ELEVENLABS_API_KEY },
               body: formData,
             });
-            if (!sttResponse.ok) throw new Error("STT request failed");
+            if (!sttResponse.ok) throw new Error('STT request failed');
             const sttData = await sttResponse.json();
             setTranscript(sttData.text);
-          } catch (err) { console.error("Transcription error:", err); }
+          } catch (err) {
+            console.error('Transcription error:', err);
+          }
         };
         mediaRecorder.start();
-        await conversation.startSession({ signedUrl: data.signedUrl });
+        await conversation.startSession({ signedUrl });
       } catch (err) {
-        console.error("Voice session failed:", err);
+        console.error('Voice session failed:', err);
         alert(`Error: ${err.message}`);
       }
     }
