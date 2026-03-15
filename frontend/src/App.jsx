@@ -87,8 +87,8 @@ const ReactiveAudioRing = ({ isListening, volume = 0 }) => {
     const elapsedTime = state.clock.getElapsedTime();
     const voiceBoost = volume * 1.5;
 
-    const targetX = pointerActive.current ? (state.pointer.x * Math.PI) / 6 : Math.sin(elapsedTime * 0.5) * 0.1;
-    const targetY = pointerActive.current ? (state.pointer.y * Math.PI) / 6 : Math.cos(elapsedTime * 0.5) * 0.1;
+    const targetX = pointerActive.current ? (state.pointer.x * Math.PI) / 2 : Math.sin(elapsedTime * 0.5) * 0.1;
+    const targetY = pointerActive.current ? (state.pointer.y * Math.PI) / 2 : Math.cos(elapsedTime * 0.5) * 0.1;
 
     if (groupRef.current) {
       groupRef.current.rotation.y = THREE.MathUtils.damp(groupRef.current.rotation.y, targetX, 2, delta);
@@ -1748,10 +1748,16 @@ const App = () => {
     setActiveTab('voice');
     setIsFriendsListOpen(false);
     setSelectedFriendId(null);
-    setShowSummaryPrompt(false);
-    setShowRecordPrompt(false);
-    setShowRecordingSession(false);
+    setForumOverlayVisible(false);
+    setForumOverlayQuestion(null);
+    setRecordingPhase(null);
+    setRecordingMode(null);
+    setSummaryPhase(null);
     if (isListening) conversation.endSession();
+    if (audioRef.current) {
+      audioRef.current.pause();
+      audioRef.current = null;
+    }
     setAppState('login');
   };
 
@@ -2931,7 +2937,6 @@ const App = () => {
               <main className="content-area">
               <div
                   className="canvas-wrapper"
-                  onClick={activeTab === 'voice' ? toggleListening : undefined}
                   style={{ pointerEvents: activeTab === 'friends' ? 'none' : 'auto' }}
                 >
                   <Canvas camera={{ position: [0, 0, 5], fov: 40 }} dpr={[1, Math.min(2, window.devicePixelRatio)]}>
@@ -2952,7 +2957,14 @@ const App = () => {
                 </div>
 
                 <AnimatePresence mode="wait">
-                  {appState === 'setup' && <SetupScreen key="setup" currentUser={currentUser} onComplete={() => { setAppState('main'); setShowSummaryPrompt(true); }} />}
+                  {appState === 'setup' && <SetupScreen
+                    key="setup"
+                    currentUser={currentUser}
+                    onComplete={() => {
+                      setAppState('main');
+                      askDailySummaryVoice(currentUser);  // ← same TTS flow as login
+                    }}
+                  />}
 
                   {appState === 'main' && activeTab === 'friends' && (
                     <FriendsGraph key="friends-graph" graphData={graphData} selectedNodeId={selectedFriendId} onNodeClick={handleNodeClick} />
