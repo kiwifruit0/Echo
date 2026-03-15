@@ -1,17 +1,16 @@
 import io
 
 from pydub import AudioSegment
-
-from ..routers.db_router import fetch_daily_summary, get_audio_segment_from_audio_path
 from .speech_controller import output_speech
+from ..routers.db_router import fetch_daily_summary, get_audio_segment_from_audio_path
+
 
 short_pause = AudioSegment.silent(duration=500)
-long_pause = AudioSegment.silent(duration=1500)
+long_pause = AudioSegment.silent(duration=1250)
 
 
-
-async def collate_summaries(user):
-    result = await fetch_daily_summary(user)
+async def collate_summaries(username):
+    result = await fetch_daily_summary(username)
     summaries = result["friendSummaries"]
     combined_audio = AudioSegment.empty()
 
