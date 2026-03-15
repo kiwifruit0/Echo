@@ -1,6 +1,6 @@
 import json
-from io import BytesIO
 from datetime import datetime, timedelta, timezone
+from io import BytesIO
 from typing import Any
 from uuid import uuid4
 
@@ -19,6 +19,7 @@ from ..models.models import (
     FriendshipRequest,
     User,
     UserInterestAddRequest,
+    UserVoiceIdUpdateRequest,
 )
 from ..utils.database import (
     daily_notes,
@@ -223,6 +224,21 @@ async def get_user(user_id: str):
     object_id = _parse_object_id(user_id, "user_id")
     user = await users.find_one({"_id": object_id})
     return _serialize_document(user)
+
+
+@router.patch("/users/{username}/voice-id")
+async def update_user_voice_id(username: str, request: UserVoiceIdUpdateRequest):
+    user = await _get_user_by_username(username, "username")
+    voice_id = request.voiceId
+
+    if voice_id is not None:
+        voice_id = voice_id.strip()
+        if not voice_id:
+            raise HTTPException(status_code=400, detail="voiceId cannot be empty")
+
+    await users.update_one({"_id": user["_id"]}, {"$set": {"voiceId": voice_id}})
+    updated_user = await users.find_one({"_id": user["_id"]})
+    return _serialize_document(updated_user)
 
 
 @router.post("/users/{username}/interests")
@@ -701,7 +717,9 @@ def _audio_format_from_path(audio_path: str) -> str | None:
 async def get_audio_segment_from_audio_path(
     audio_path: str, expires_in: int = 3600
 ) -> AudioSegment:
-    signed_url_payload = await get_audio_signed_url(path=audio_path, expires_in=expires_in)
+    signed_url_payload = await get_audio_signed_url(
+        path=audio_path, expires_in=expires_in
+    )
     signed_url = signed_url_payload["signedUrl"]
 
     async with httpx.AsyncClient(timeout=30.0) as client:
@@ -710,7 +728,9 @@ async def get_audio_segment_from_audio_path(
     if response.status_code >= 400:
         raise HTTPException(
             status_code=502,
-            detail=f"Signed URL audio download failed ({response.status_code}): {response.text}",
+            detail=f"Signed URL audio download failed ({response.status_code}): {
+                response.text
+            }",
         )
     if not response.content:
         raise HTTPException(status_code=502, detail="Signed URL returned empty audio")

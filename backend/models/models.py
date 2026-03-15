@@ -47,3 +47,7 @@ class FriendshipRequest(BaseModel):
 
 class UserInterestAddRequest(BaseModel):
     interestNames: List[str]
+
+
+class UserVoiceIdUpdateRequest(BaseModel):
+    voiceId: Optional[str] = None
