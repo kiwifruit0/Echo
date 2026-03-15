@@ -2,7 +2,7 @@ import io
 
 from pydub import AudioSegment
 from .speech_controller import output_speech
-from ..routers.db_router import fetch_daily_summary, get_audio_segment_from_audio_path, list_forum_posts, list_forum_answers
+from ..routers.db_router import fetch_daily_summary, get_audio_segment_from_audio_path, list_forum_posts, list_forum_answers, _get_user_by_username
 
 
 short_pause = AudioSegment.silent(duration=500)
@@ -56,6 +56,7 @@ async def collate_forum_answers(username):
     posts = await list_forum_posts(username)
     recent_post = posts.sort("createdAt", -1)[0]
 
+    combined_audio = AudioSegment.empty()
 
     post_answers = list_forum_answers(recent_post["postId"])
     if post_answers == {}:
@@ -71,15 +72,15 @@ async def collate_forum_answers(username):
             print("No answers found for your post", username)
             continue
 
-        try:
-            intro_generator = await output_speech(username, f"{username} said {answer["transcriptText"]}")
+        try:            
+            intro_generator = await output_speech(answer["authorId"], f"{answer["authorId"]} said {answer["transcriptText"]}")
 
             intro_bytes = b"".join(intro_generator)
             intro_seg = AudioSegment.from_file(io.BytesIO(intro_bytes), format="ogg")
             
 
             combined_audio += intro_seg + long_pause
-            print("note added")
+            print("forumanswer")
         except Exception as e:
             print(f"Error processing {username}: {e}")
             continue
