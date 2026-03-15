@@ -1,6 +1,6 @@
 from ..controllers.speech_controller import call_gemini, output_speech
 from fastapi import APIRouter, Query
-from ..controllers.daily_summary_controller import collate_summaries
+from ..controllers.daily_summary_controller import collate_summaries, collate_forum_answers
 from .db_router import list_interests
 from fastapi.responses import StreamingResponse
 
@@ -43,6 +43,14 @@ async def humanize_text(text):
 @router.post("/summary/daily")
 async def daily_summary(username: str = Query(...)):
     buf = await collate_summaries(username)
+    return StreamingResponse(
+        buf,
+        media_type="audio/ogg",
+    )
+
+@router.post("/summary/forum_answers")
+async def collate_forum_answers(username):
+    buf = await collate_forum_answers(username)
     return StreamingResponse(
         buf,
         media_type="audio/ogg",
