@@ -2772,7 +2772,7 @@ const App = () => {
 .profile-interests-edit-grid {
   display: grid;
   grid-template-columns: repeat(auto-fill, minmax(120px, 1fr));
-  gap: 14px;
+  gap: 20px;
   margin-bottom: 20px;
   width: 100%;
 }
@@ -3031,7 +3031,6 @@ const App = () => {
                             transition={{ duration: 0.4 }}
                             style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 20, pointerEvents: 'auto' }}
                           >
-                            {/* Pulsing dot */}
                             <motion.div
                               animate={recordingPhase === 'recording' ? { scale: [1, 1.4, 1], opacity: [1, 0.6, 1] } : { scale: 1 }}
                               transition={{ repeat: Infinity, duration: 1.2, ease: 'easeInOut' }}
@@ -3041,8 +3040,6 @@ const App = () => {
                                 boxShadow: recordingPhase === 'recording' ? '0 0 0 4px rgba(10,10,10,0.1)' : 'none',
                               }}
                             />
-
-                            {/* Timer or status */}
                             <AnimatePresence mode="wait">
                               <motion.p
                                 key={recordingPhase}
@@ -3075,7 +3072,6 @@ const App = () => {
                               </motion.p>
                             </AnimatePresence>
 
-                            {/* Done + Cancel side by side — only while actively recording */}
                             <AnimatePresence>
                               {recordingPhase === 'recording' && (
                                 <motion.div
@@ -3090,19 +3086,12 @@ const App = () => {
                                     whileTap={{ scale: 0.94 }}
                                     onClick={stopDailyRecording}
                                     style={{
-                                      padding: '12px 24px',
-                                      borderRadius: '24px',
-                                      background: 'var(--text-primary)',
-                                      color: 'var(--bg-colour)',
-                                      border: '1px solid var(--text-primary)',
-                                      fontSize: '14px',
-                                      fontWeight: 600,
-                                      fontFamily: 'inherit',
-                                      cursor: 'pointer',
+                                      padding: '12px 24px', borderRadius: '24px',
+                                      background: 'var(--text-primary)', color: 'var(--bg-colour)',
+                                      border: '1px solid var(--text-primary)', fontSize: '14px',
+                                      fontWeight: 600, fontFamily: 'inherit', cursor: 'pointer',
                                       boxShadow: '0 4px 16px rgba(0,0,0,0.14)',
-                                      display: 'flex',
-                                      alignItems: 'center',
-                                      gap: 8,
+                                      display: 'flex', alignItems: 'center', gap: 8,
                                     }}
                                   >
                                     <svg width="10" height="10" viewBox="0 0 10 10" fill="currentColor">
@@ -3110,7 +3099,6 @@ const App = () => {
                                     </svg>
                                     Done
                                   </motion.button>
-
                                   <motion.button
                                     whileHover={{ scale: 1.06, y: -1 }}
                                     whileTap={{ scale: 0.94 }}
@@ -3123,15 +3111,10 @@ const App = () => {
                                       setRecordingMode(null);
                                     }}
                                     style={{
-                                      padding: '12px 24px',
-                                      borderRadius: '24px',
-                                      background: 'transparent',
-                                      color: 'var(--text-primary)',
-                                      border: '1px solid rgba(0,0,0,0.15)',
-                                      fontSize: '14px',
-                                      fontWeight: 600,
-                                      fontFamily: 'inherit',
-                                      cursor: 'pointer',
+                                      padding: '12px 24px', borderRadius: '24px',
+                                      background: 'transparent', color: 'var(--text-primary)',
+                                      border: '1px solid rgba(0,0,0,0.15)', fontSize: '14px',
+                                      fontWeight: 600, fontFamily: 'inherit', cursor: 'pointer',
                                     }}
                                   >
                                     Cancel
@@ -3189,6 +3172,105 @@ const App = () => {
                           </motion.div>
                         )}
                       </AnimatePresence>
+
+                      {/* ── Stop / Restart assistant controls ── */}
+                      <motion.div
+                        initial={{ opacity: 0, y: 12 }}
+                        animate={{ opacity: 1, y: 0 }}
+                        transition={{ delay: 0.3, duration: 0.4 }}
+                        style={{
+                          display: 'flex',
+                          gap: 10,
+                          pointerEvents: 'auto',
+                          marginTop: 32,
+                        }}
+                      >
+                        {/* Stop — only shown when the assistant is actively doing something */}
+                        <AnimatePresence>
+                          {(spokenText || listeningForResponse || recordingPhase) && (
+                            <motion.button
+                              key="stop-btn"
+                              initial={{ opacity: 0, scale: 0.85, y: 6 }}
+                              animate={{ opacity: 1, scale: 1, y: 0 }}
+                              exit={{ opacity: 0, scale: 0.85, y: 6 }}
+                              transition={{ duration: 0.2 }}
+                              whileHover={{ scale: 1.06, y: -1 }}
+                              whileTap={{ scale: 0.93 }}
+                              onClick={() => {
+                                if (audioRef.current) {
+                                  audioRef.current.pause();
+                                  audioRef.current.onended = null;
+                                  try { URL.revokeObjectURL(audioRef.current.src); } catch {}
+                                  audioRef.current = null;
+                                }
+                                setListeningForResponse(false);
+                                setSpokenText('');
+                                setRevealedWords(0);
+                              }}
+                              style={{
+                                padding: '10px 20px', borderRadius: '24px',
+                                background: 'rgba(255,255,255,0.75)',
+                                backdropFilter: 'blur(16px)', WebkitBackdropFilter: 'blur(16px)',
+                                border: '1px solid rgba(0,0,0,0.09)',
+                                color: 'var(--text-secondary)', fontSize: '13px',
+                                fontWeight: 600, fontFamily: 'inherit', cursor: 'pointer',
+                                boxShadow: '0 4px 16px rgba(0,0,0,0.07)',
+                                display: 'flex', alignItems: 'center', gap: 7,
+                              }}
+                            >
+                              <svg width="9" height="9" viewBox="0 0 10 10" fill="currentColor">
+                                <rect x="0" y="0" width="10" height="10" rx="2"/>
+                              </svg>
+                              Stop
+                            </motion.button>
+                          )}
+                        </AnimatePresence>
+
+                        {/* Restart — always visible on voice tab */}
+                        <motion.button
+                          key="restart-btn"
+                          whileHover={{ scale: 1.06, y: -1 }}
+                          whileTap={{ scale: 0.93 }}
+                          onClick={() => {
+                            if (audioRef.current) {
+                              audioRef.current.pause();
+                              audioRef.current.onended = null;
+                              try { URL.revokeObjectURL(audioRef.current.src); } catch {}
+                              audioRef.current = null;
+                            }
+                            clearInterval(recordingTimerRef.current);
+                            const mr = mediaRecorderRef2.current;
+                            if (mr && mr.state !== 'inactive') {
+                              mr.onstop = () => {};
+                              mr.stop();
+                            }
+                            setListeningForResponse(false);
+                            setSpokenText('');
+                            setRevealedWords(0);
+                            setRecordingPhase(null);
+                            setRecordingMode(null);
+                            setForumOverlayVisible(false);
+                            setForumOverlayQuestion(null);
+                            promptActionChoice();
+                          }}
+                          style={{
+                            padding: '10px 20px', borderRadius: '24px',
+                            background: 'var(--text-primary)',
+                            border: '1px solid var(--text-primary)',
+                            color: 'var(--bg-colour)', fontSize: '13px',
+                            fontWeight: 600, fontFamily: 'inherit', cursor: 'pointer',
+                            boxShadow: '0 4px 16px rgba(0,0,0,0.14)',
+                            display: 'flex', alignItems: 'center', gap: 7,
+                          }}
+                        >
+                          <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
+                            <polyline points="1 4 1 10 7 10"/>
+                            <path d="M3.51 15a9 9 0 1 0 .49-3.65"/>
+                          </svg>
+                          Restart
+                        </motion.button>
+                      </motion.div>
+
                     </div>
                   )}
                 </AnimatePresence>
