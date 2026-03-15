@@ -41,7 +41,7 @@ async def daily_summary(username: str = Query(...)):
     )
 
 @router.post("/generalise")
-async def generalise_answer(text):
+async def generalise_answer(text: str = Query(...)):
     prompt = f"""
     Determine the user's choice from their input.
     There are FOUR options:
@@ -58,6 +58,27 @@ async def generalise_answer(text):
     result = await call_gemini(prompt)
     return result
 
+
+@router.post("/yes_or_no")
+async def yes_or_no_answer(text: str = Query(...)):
+    prompt = f"""
+    Determine the user's choice from their input.
+    There are TWO options:
+    1. Yes
+    2. No 
+    Pick ONE option from the given choices.
+    If a user choice can not be determined, return 'None'.
+
+    Input: {text}
+    """
+    result = await call_gemini(prompt)
+    return result
+
+
 @router.post("/text_to_speech")
 async def text_to_speech(username, text):
-    return await output_speech(username, text)
+    buff = await output_speech(username, text)
+    return StreamingResponse(
+        buff,
+        media_type="audio/ogg",
+    )

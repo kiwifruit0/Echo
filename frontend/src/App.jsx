@@ -1342,6 +1342,14 @@ const App = () => {
 
   const [revealedWords, setRevealedWords] = useState(0);
 
+  const [listeningForResponse, setListeningForResponse] = useState(false);
+
+  const currentUserRef = useRef(null);
+
+  useEffect(() => {
+    currentUserRef.current = currentUser;
+  }, [currentUser]);
+
   const fetchFriends = useCallback(async (username) => {
     if (!username) return;
     setFriendsLoading(true);
@@ -1362,68 +1370,47 @@ const App = () => {
     setCurrentUser(user);
     setAppState('main');
     fetchFriends(user.username);
-    askDailySummaryVoice(); // call this after login
+    askDailySummaryVoice(user);
   };
 
-  const askDailySummaryVoice = useCallback(async () => {
+  const askDailySummaryVoice = useCallback(async (user) => {
     setSummaryPhase('asking');
-    setRevealedWords(0); // reset word reveal
+    setRevealedWords(0);
   
     const questionText = "Would you like to hear your daily summary?";
     const words = questionText.split(' ');
   
+    const url = `http://127.0.0.1:8000/speech/text_to_speech?username=${encodeURIComponent(user.username)}&text=${encodeURIComponent(questionText)}`;
+    console.log('TTS URL:', url); // check this prints correctly in console
+  
     try {
-      const res = await fetch(
-        `https://api.elevenlabs.io/v1/text-to-speech/${YOUR_VOICE_ID}/with-timestamps`,
-        {
-          method: 'POST',
-          headers: {
-            'Content-Type': 'application/json',
-            'xi-api-key': import.meta.env.VITE_ELEVENLABS_API_KEY,
-          },
-          body: JSON.stringify({
-            text: questionText,
-            model_id: 'eleven_multilingual_v2',
-            voice_settings: { stability: 0.5, similarity_boost: 0.75 },
-          }),
-        }
-      );
-      if (!res.ok) return;
-      const data = await res.json();
+      const res = await fetch(url, { method: 'POST' });
+      if (!res.ok) {
+        const err = await res.text();
+        throw new Error(`HTTP ${res.status}: ${err}`);
+      }
   
-      // data.alignment.char_start_times_seconds[i] gives timing per character
-      // Map character timings → word timings
-      const chars = data.alignment.characters;
-      const times = data.alignment.char_start_times_seconds;
-  
-      // Find the start time of the first character of each word
-      let charIdx = 0;
-      const wordTimings = words.map((word) => {
-        // skip spaces
-        while (charIdx < chars.length && chars[charIdx] === ' ') charIdx++;
-        const startTime = times[charIdx] ?? 0;
-        charIdx += word.length;
-        return startTime;
-      });
-  
-      // Decode and play the audio
-      const audioBytes = Uint8Array.from(atob(data.audio_base64), c => c.charCodeAt(0));
-      const blob = new Blob([audioBytes], { type: 'audio/mpeg' });
-      const url = URL.createObjectURL(blob);
+      const blob = await res.blob();
+      const audioUrl = URL.createObjectURL(blob);
       if (audioRef.current) { audioRef.current.pause(); URL.revokeObjectURL(audioRef.current.src); }
-      audioRef.current = new Audio(url);
+      audioRef.current = new Audio(audioUrl);
   
-      // Schedule each word reveal to fire at its timestamp
-      wordTimings.forEach((t, i) => {
-        setTimeout(() => setRevealedWords(i + 1), t * 1000);
+      audioRef.current.addEventListener('loadedmetadata', () => {
+        const duration = audioRef.current.duration;
+        const interval = duration / words.length;
+        words.forEach((_, i) => {
+          setTimeout(() => setRevealedWords(i + 1), i * interval * 1000);
+        });
       });
   
       audioRef.current.play();
-      audioRef.current.onended = () => URL.revokeObjectURL(url);
+      audioRef.current.onended = () => {
+        URL.revokeObjectURL(audioUrl);
+        listenForSummaryResponse(); // start listening immediately after question finishes
+      };
   
     } catch (err) {
-      console.warn('TTS prompt failed:', err);
-      // Fallback: reveal all words instantly
+      console.warn('TTS prompt failed:', err.message);
       setRevealedWords(words.length);
     }
   }, []);
@@ -1609,14 +1596,47 @@ const App = () => {
     setAppState('login');
   };
 
-  const handleSummaryYes = async () => {
-    setSummaryPhase('playing');
+  const handleSummaryYes = useCallback(async () => {
+    const user = currentUserRef.current;
+    if (!user?.username) return;
+  
     try {
       const res = await fetch(
-        `http://127.0.0.1:8000/speech/summary/daily?username=${encodeURIComponent(currentUser.username)}`,
+        `http://127.0.0.1:8000/speech/summary/daily?username=${encodeURIComponent(user.username)}`,
         { method: 'POST' }
       );
       if (!res.ok) throw new Error('Failed to fetch summary');
+      const blob = await res.blob();
+      const url = URL.createObjectURL(blob);
+      if (audioRef.current) {
+        audioRef.current.pause();
+        URL.revokeObjectURL(audioRef.current.src);
+      }
+      audioRef.current = new Audio(url);
+      audioRef.current.play();
+      audioRef.current.onended = () => {
+        URL.revokeObjectURL(url);
+        setShowRecordPrompt(true);
+      };
+    } catch (err) {
+      console.error('Daily summary error:', err);
+      setShowRecordPrompt(true);
+    }
+  }, []);
+
+  const listenForSummaryResponseRef = useRef(null);
+  const handleGeneralisedChoiceRef = useRef(null);
+
+  const speakThenAct = useCallback(async (text, onDone) => {
+    try {
+      const user = currentUserRef.current;
+      if (!user?.username) { onDone?.(); return; }
+
+      const res = await fetch(
+        `http://127.0.0.1:8000/speech/text_to_speech?username=${encodeURIComponent(user.username)}&text=${encodeURIComponent(text)}`,
+        { method: 'POST' }
+      );
+      if (!res.ok) throw new Error('TTS failed');
       const blob = await res.blob();
       const url = URL.createObjectURL(blob);
       if (audioRef.current) { audioRef.current.pause(); URL.revokeObjectURL(audioRef.current.src); }
@@ -1624,15 +1644,91 @@ const App = () => {
       audioRef.current.play();
       audioRef.current.onended = () => {
         URL.revokeObjectURL(url);
-        setSummaryPhase(null);
-        setShowRecordPrompt(true);
+        onDone?.();
       };
     } catch (err) {
-      console.error('Daily summary error:', err);
-      setSummaryPhase(null);
-      setShowRecordPrompt(true);
+      console.warn('speakThenAct failed:', err);
+      onDone?.();
     }
-  };
+  }, []); // no dependencies needed — reads ref directly
+
+  const listenForSummaryResponse = useCallback(async () => {
+    setListeningForResponse(true);
+    try {
+      const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+      const mimeType = MediaRecorder.isTypeSupported('audio/webm;codecs=opus')
+        ? 'audio/webm;codecs=opus' : 'audio/webm';
+      const recorder = new MediaRecorder(stream, { mimeType });
+      const chunks = [];
+  
+      recorder.ondataavailable = (e) => { if (e.data.size > 0) chunks.push(e.data); };
+  
+      recorder.onstop = async () => {
+        stream.getTracks().forEach(t => t.stop());
+        try {
+          // Transcribe
+          const blob = new Blob(chunks, { type: mimeType });
+          const formData = new FormData();
+          formData.append('file', blob, 'response.webm');
+          formData.append('model_id', 'scribe_v1');
+          const sttRes = await fetch('https://api.elevenlabs.io/v1/speech-to-text', {
+            method: 'POST',
+            headers: { 'xi-api-key': import.meta.env.VITE_ELEVENLABS_API_KEY },
+            body: formData,
+          });
+          if (!sttRes.ok) throw new Error('STT failed');
+          const sttData = await sttRes.json();
+          const transcript = sttData.text;
+  
+          // Generalise
+          const genRes = await fetch(
+            `http://127.0.0.1:8000/speech/yes_or_no?text=${encodeURIComponent(transcript)}`,
+            { method: 'POST' }
+          );
+          if (!genRes.ok) throw new Error('Generalise failed');
+          const choice = await genRes.json();
+  
+          await handleGeneralisedChoice(choice);
+        } catch (err) {
+          console.warn('Response processing failed:', err);
+          setListeningForResponse(false);
+          setSummaryPhase(null);
+        }
+      };
+  
+      // Record for 4 seconds then stop
+      recorder.start();
+      setTimeout(() => recorder.stop(), 4000);
+  
+    } catch (err) {
+      console.warn('Mic failed:', err);
+      setListeningForResponse(false);
+    }
+  }, []);
+
+  const handleGeneralisedChoice = useCallback(async (choice) => {
+    setListeningForResponse(false);
+    setSummaryPhase(null);
+    const trimmed = (typeof choice === 'string' ? choice : JSON.stringify(choice)).trim().toLowerCase();
+  
+    if (trimmed.includes('yes') || trimmed.includes('1')) {
+      await speakThenAct(
+        "Of course, here is your daily summary.",
+        () => handleSummaryYes()
+      );
+    } else if (trimmed.includes('no') || trimmed.includes('2')) {
+      await speakThenAct("No problem, have a great day.", () => {});
+    } else {
+      await speakThenAct(
+        "Sorry, I didn't catch that. Would you like to hear your daily summary?",
+        () => listenForSummaryResponseRef.current?.()
+      );
+    }
+  }, [speakThenAct, handleSummaryYes]);
+  
+  listenForSummaryResponseRef.current = listenForSummaryResponse;
+  handleGeneralisedChoiceRef.current = handleGeneralisedChoice;
+
 
   const styles = `
     @import url('https://fonts.googleapis.com/css2?family=DM+Sans:wght@300;400;500;600;700;800&display=swap');
@@ -2261,63 +2357,60 @@ const App = () => {
                   {appState === 'main' && activeTab === 'voice' && (
                     <div className="interaction-overlay" key="interaction-overlay">
                       <AnimatePresence mode="wait">
-                        {summaryPhase === 'asking' ? (
-                          <motion.div
-                            key="summary-question"
-                            initial={{ opacity: 0, y: 16, filter: 'blur(4px)' }}
-                            animate={{ opacity: 1, y: 0, filter: 'blur(0px)' }}
-                            exit={{ opacity: 0, y: -10, filter: 'blur(4px)' }}
-                            transition={{ duration: 0.4 }}
-                            style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 20 }}
-                          >
-                            <p className="transcript-text" style={{ textAlign: 'center' }}>
-                              "{"Would you like to hear your daily summary?".split(' ').map((word, i) => (
-                                <motion.span
-                                  key={i}
-                                  initial={{ opacity: 0, y: 6, filter: 'blur(3px)' }}
-                                  animate={revealedWords > i
-                                    ? { opacity: 1, y: 0, filter: 'blur(0px)' }
-                                    : { opacity: 0, y: 6, filter: 'blur(3px)' }
-                                  }
-                                  transition={{ duration: 0.25, ease: 'easeOut' }}
-                                  style={{ display: 'inline-block', marginRight: '0.28em' }}
-                                >
-                                  {word}
-                                </motion.span>
-                              ))}"
-                            </p>
+                      {summaryPhase === 'asking' ? (
+                        <motion.div
+                          key="summary-question"
+                          initial={{ opacity: 0, y: 16, filter: 'blur(4px)' }}
+                          animate={{ opacity: 1, y: 0, filter: 'blur(0px)' }}
+                          exit={{ opacity: 0, y: -10, filter: 'blur(4px)' }}
+                          transition={{ duration: 0.4 }}
+                          style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 20 }}
+                        >
+                          <p className="transcript-text" style={{ textAlign: 'center' }}>
+                            {"Would you like to hear your daily summary?".split(' ').map((word, i) => (
+                              <motion.span
+                                key={i}
+                                initial={{ opacity: 0, y: 6, filter: 'blur(3px)' }}
+                                animate={revealedWords > i
+                                  ? { opacity: 1, y: 0, filter: 'blur(0px)' }
+                                  : { opacity: 0, y: 6, filter: 'blur(3px)' }}
+                                transition={{ duration: 0.25, ease: 'easeOut' }}
+                                style={{ display: 'inline-block', marginRight: '0.28em' }}
+                              >
+                                {word}
+                              </motion.span>
+                            ))}
+                          </p>
 
-                            {/* Only show buttons after all words have appeared */}
-                            <AnimatePresence>
-                              {revealedWords >= "Would you like to hear your daily summary?".split(' ').length && (
+                          <AnimatePresence mode="wait">
+                            {listeningForResponse ? (
+                              <motion.div
+                                key="listening-indicator"
+                                initial={{ opacity: 0, scale: 0.8 }}
+                                animate={{ opacity: 1, scale: 1 }}
+                                exit={{ opacity: 0, scale: 0.8 }}
+                                style={{ display: 'flex', alignItems: 'center', gap: 8, color: 'var(--text-secondary)', fontSize: 13, pointerEvents: 'none' }}
+                              >
                                 <motion.div
-                                  initial={{ opacity: 0, y: 10 }}
-                                  animate={{ opacity: 1, y: 0 }}
-                                  exit={{ opacity: 0 }}
-                                  transition={{ duration: 0.3, delay: 0.2 }}
-                                  style={{ display: 'flex', gap: 12, pointerEvents: 'auto' }}
-                                >
-                                  <motion.button
-                                    className="summary-inline-btn summary-inline-btn--yes"
-                                    whileHover={{ scale: 1.05, y: -1 }}
-                                    whileTap={{ scale: 0.95 }}
-                                    onClick={handleSummaryYes}
-                                  >
-                                    Yes, play it
-                                  </motion.button>
-                                  <motion.button
-                                    className="summary-inline-btn summary-inline-btn--no"
-                                    whileHover={{ scale: 1.05, y: -1 }}
-                                    whileTap={{ scale: 0.95 }}
-                                    onClick={() => { setSummaryPhase(null); setShowRecordPrompt(true); }}
-                                  >
-                                    Not now
-                                  </motion.button>
-                                </motion.div>
-                              )}
-                            </AnimatePresence>
-                          </motion.div>
-                        ) : (
+                                  animate={{ scale: [1, 1.3, 1] }}
+                                  transition={{ repeat: Infinity, duration: 1.2, ease: 'easeInOut' }}
+                                  style={{ width: 8, height: 8, borderRadius: '50%', background: 'var(--text-primary)' }}
+                                />
+                                Listening...
+                              </motion.div>
+                            ) : revealedWords >= "Would you like to hear your daily summary?".split(' ').length ? (
+                              <motion.div
+                                key="waiting"
+                                initial={{ opacity: 0 }}
+                                animate={{ opacity: 1 }}
+                                style={{ fontSize: 12, color: 'var(--text-secondary)', pointerEvents: 'none' }}
+                              >
+                                Waiting for your response...
+                              </motion.div>
+                            ) : null}
+                          </AnimatePresence>
+                        </motion.div>
+                      ) : (
                           <motion.div
                             key={isListening ? 'listening' : 'idle'}
                             initial={{ opacity: 0, y: 10, filter: 'blur(4px)' }}
