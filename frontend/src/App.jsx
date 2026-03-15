@@ -160,7 +160,6 @@ const CanvasLoader = () => (
 
 // --- 3. Dynamic 3D Friends Graph Component ---
 const FriendsGraph = ({ graphData, selectedNodeId, onNodeClick }) => {
-  const containerRef = useRef();
   const fgRef = useRef();
   const [dimensions, setDimensions] = useState({ width: window.innerWidth, height: window.innerHeight });
 
@@ -171,27 +170,50 @@ const FriendsGraph = ({ graphData, selectedNodeId, onNodeClick }) => {
   }, []);
 
   useEffect(() => {
+    if (fgRef.current) {
+      setTimeout(() => fgRef.current?.zoomToFit(800, 100), 1000);
+    }
+  }, [graphData]);
+
+  useEffect(() => {
     if (selectedNodeId !== null && fgRef.current && graphData.nodes.length) {
       const node = graphData.nodes.find(n => n.id === selectedNodeId);
       if (node && node.x !== undefined) {
-        const distance = 40;
+        const distance = 60;
         fgRef.current.cameraPosition(
           { x: node.x + distance, y: node.y + distance, z: node.z + distance },
           node,
-          2000
+          1800
         );
       }
     }
   }, [selectedNodeId, graphData]);
 
+  const nodeThreeObject = useCallback((node) => {
+    const group = new THREE.Group();
+  
+    const geo = new THREE.IcosahedronGeometry(node.isMe ? 5 : 3.5, 0);
+    const mat = new THREE.MeshStandardMaterial({
+      color: node.id === selectedNodeId ? '#ffffff' : node.colour,
+      roughness: 0.25,
+      metalness: 0.7,
+      flatShading: true,
+    });
+    const mesh = new THREE.Mesh(geo, mat);
+    group.add(mesh);
+  
+    return group;
+  }, [selectedNodeId]);
+
   return (
     <motion.div
-      ref={containerRef}
       className="graph-container"
-      initial={{ opacity: 0, scale: 0.95 }}
-      animate={{ opacity: 1, scale: 1 }}
-      exit={{ opacity: 0, scale: 1.05 }}
-      transition={{ duration: 0.5, ease: "easeInOut" }}
+      initial={{ opacity: 0 }}
+      animate={{ opacity: 1 }}
+      exit={{ opacity: 0 }}
+      transition={{ duration: 0.6, ease: "easeInOut" }}
+      // Ensure pointer events are never swallowed by the motion wrapper
+      style={{ pointerEvents: 'all', touchAction: 'none' }}
     >
       <ForceGraph3D
         ref={fgRef}
@@ -199,13 +221,24 @@ const FriendsGraph = ({ graphData, selectedNodeId, onNodeClick }) => {
         height={dimensions.height}
         graphData={graphData}
         backgroundColor="rgba(0,0,0,0)"
-        nodeColor={node => node.id === selectedNodeId ? '#ffffff' : node.colour}
-        nodeRelSize={6}
-        linkWidth={1.5}
-        linkColor={() => 'rgba(135, 135, 135, 0.3)'}
+        nodeThreeObject={nodeThreeObject}
+        nodeThreeObjectExtend={false}
+        linkWidth={0.8}
+        linkColor={() => 'rgba(120, 120, 120, 0.2)'}
+        linkOpacity={0.4}
+        linkCurvature={0}
         enableNodeDrag={true}
+        enableZoomInteraction={true}
+        enablePanInteraction={true}
+        enablePointerInteraction={true}
         showNavInfo={false}
         onNodeClick={onNodeClick}
+        // Smooth, floaty physics
+        d3AlphaDecay={0.01}
+        d3VelocityDecay={0.1}
+        warmupTicks={60}
+        cooldownTicks={200}
+        cooldownTime={4000}
       />
     </motion.div>
   );
@@ -937,14 +970,17 @@ const DailySummaryPrompt = ({ onYes, onNo }) => (
   </AnimatePresence>
 );
 
-// --- 11b. Profile Tab Component ---
 const ProfileTab = ({ currentUser }) => {
   const [userInterests, setUserInterests] = useState([]);
+  const [allInterests, setAllInterests] = useState([]);
   const [loading, setLoading] = useState(true);
+  const [isEditing, setIsEditing] = useState(false);
+  const [saving, setSaving] = useState(false);
+  const [selectedInterests, setSelectedInterests] = useState([]);
 
   useEffect(() => {
     if (!currentUser) return;
-    const fetchUserWithInterests = async () => {
+    const fetchData = async () => {
       setLoading(true);
       try {
         const [userRes, interestsRes] = await Promise.all([
@@ -952,17 +988,51 @@ const ProfileTab = ({ currentUser }) => {
           fetch(`${API_BASE}/interests`),
         ]);
         const userData = await userRes.json();
-        const allInterests = await interestsRes.json();
+        const fetchedAll = await interestsRes.json();
         const interestIdSet = new Set(userData.interestIds || []);
-        setUserInterests(allInterests.filter(i => interestIdSet.has(i.id)));
+        const current = fetchedAll.filter(i => interestIdSet.has(i.id));
+        setAllInterests(fetchedAll);
+        setUserInterests(current);
+        setSelectedInterests(current.map(i => i.name));
       } catch (err) {
         console.warn('Could not load profile interests:', err);
       } finally {
         setLoading(false);
       }
     };
-    fetchUserWithInterests();
+    fetchData();
   }, [currentUser]);
+
+  const toggleInterest = (name) => {
+    setSelectedInterests(prev =>
+      prev.includes(name) ? prev.filter(n => n !== name) : [...prev, name]
+    );
+  };
+
+  const handleSave = async () => {
+    if (!currentUser?.username) return;
+    setSaving(true);
+    try {
+      const res = await fetch(`${API_BASE}/users/${encodeURIComponent(currentUser.username)}/interests`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ interestNames: selectedInterests }),
+      });
+      if (!res.ok) throw new Error('Failed to save');
+      const updated = allInterests.filter(i => selectedInterests.includes(i.name));
+      setUserInterests(updated);
+      setIsEditing(false);
+    } catch (err) {
+      console.warn('Could not save interests:', err);
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  const handleEditOpen = () => {
+    setSelectedInterests(userInterests.map(i => i.name));
+    setIsEditing(true);
+  };
 
   const initials = currentUser?.username
     ? currentUser.username.slice(0, 2).toUpperCase()
@@ -984,12 +1054,67 @@ const ProfileTab = ({ currentUser }) => {
       </div>
 
       <div className="profile-section">
-        <p className="profile-section-title">Interests</p>
+        <div className="profile-section-header">
+          <p className="profile-section-title">Interests</p>
+          {!loading && !isEditing && (
+            <motion.button
+              className="profile-edit-btn"
+              onClick={handleEditOpen}
+              whileHover={{ scale: 1.04, y: -1 }}
+              whileTap={{ scale: 0.95 }}
+            >
+              {userInterests.length === 0 ? '+ Add interests' : 'Edit'}
+            </motion.button>
+          )}
+        </div>
+
         {loading ? (
           <div className="profile-loading">
             <span className="auth-spinner" style={{ borderTopColor: '#878787', borderColor: 'rgba(0,0,0,0.1)' }} />
             <span>Loading...</span>
           </div>
+        ) : isEditing ? (
+          <motion.div
+            initial={{ opacity: 0, y: 8 }}
+            animate={{ opacity: 1, y: 0 }}
+            transition={{ duration: 0.25 }}
+          >
+            <div className="profile-interests-edit-grid">
+              {allInterests.map((interest, i) => (
+                <motion.button
+                  key={interest.id}
+                  className={`interest-pill ${selectedInterests.includes(interest.name) ? 'selected' : ''}`}
+                  onClick={() => toggleInterest(interest.name)}
+                  initial={{ opacity: 0, scale: 0.88 }}
+                  animate={{ opacity: 1, scale: 1 }}
+                  transition={{ delay: i * 0.025 }}
+                  whileHover={{ scale: 1.05, y: -1 }}
+                  whileTap={{ scale: 0.94 }}
+                >
+                  {interest.name}
+                </motion.button>
+              ))}
+            </div>
+            <div className="profile-edit-actions">
+              <motion.button
+                className="profile-save-btn"
+                onClick={handleSave}
+                disabled={saving}
+                whileHover={{ scale: 1.02, y: -1 }}
+                whileTap={{ scale: 0.97 }}
+              >
+                {saving ? <span className="auth-spinner" /> : `Save (${selectedInterests.length} selected)`}
+              </motion.button>
+              <motion.button
+                className="profile-cancel-btn"
+                onClick={() => setIsEditing(false)}
+                whileHover={{ scale: 1.02 }}
+                whileTap={{ scale: 0.97 }}
+              >
+                Cancel
+              </motion.button>
+            </div>
+          </motion.div>
         ) : userInterests.length === 0 ? (
           <p className="profile-empty">No interests added yet.</p>
         ) : (
@@ -1248,24 +1373,44 @@ const App = () => {
   };
 
   const graphData = useMemo(() => {
-    if (friends.length === 0) return { nodes: [], links: [] };
+    if (!currentUser) return { nodes: [], links: [] };
     const colours = ['#0a0a0a', '#333333', '#555555', '#878787'];
-    const nodes = friends.map((friend, i) => ({
+  
+    // Central "you" node
+    const centerNode = {
+      id: currentUser.id ?? 'me',
+      name: currentUser.username,
+      val: 3,
+      colour: '#0a0a0a',
+      isMe: true,
+    };
+  
+    const friendNodes = friends.map((friend, i) => ({
       id: friend.id,
       name: friend.username,
       val: 1.5,
-      colour: colours[i % colours.length],
+      colour: colours[(i + 1) % colours.length],
     }));
-    const links = [];
-    for (let i = 0; i < nodes.length; i++) {
-      for (let j = i + 1; j < nodes.length; j++) {
-        if (Math.random() > 0.6) {
-          links.push({ source: nodes[i].id, target: nodes[j].id });
+  
+    const nodes = [centerNode, ...friendNodes];
+  
+    // Every friend links to the center
+    const links = friendNodes.map(f => ({
+      source: centerNode.id,
+      target: f.id,
+    }));
+  
+    // Optional friend-to-friend links (more selective)
+    for (let i = 0; i < friendNodes.length; i++) {
+      for (let j = i + 1; j < friendNodes.length; j++) {
+        if (Math.random() > 0.75) {
+          links.push({ source: friendNodes[i].id, target: friendNodes[j].id });
         }
       }
     }
+  
     return { nodes, links };
-  }, [friends]);
+  }, [friends, currentUser]);
 
   useEffect(() => {
     const timer = setTimeout(() => setAppState('login'), 2500);
@@ -1430,7 +1575,14 @@ const App = () => {
 
     .content-area { flex: 1; position: relative; }
     .canvas-wrapper { position: absolute; inset: 0; z-index: 1; cursor: pointer; }
-    .graph-container { position: absolute; inset: 0; z-index: 2; cursor: grab; }
+    .graph-container {
+      position: absolute;
+      inset: 0;
+      z-index: 2;
+      cursor: grab;
+      pointer-events: all;   /* was missing — this is what broke drag */
+      touch-action: none;    /* prevents browser scroll from hijacking touch drag */
+    }
     .graph-container:active { cursor: grabbing; }
 
     .interaction-overlay {
@@ -1782,7 +1934,7 @@ const App = () => {
   text-transform: uppercase; color: var(--text-secondary); margin: 0;
 }
 .profile-section {
-  width: 100%; max-width: 400px;
+  width: 75%;
   display: flex; flex-direction: column; gap: 12px;
 }
 .profile-section-title {
@@ -1790,8 +1942,12 @@ const App = () => {
   text-transform: uppercase; color: var(--text-secondary);
   margin: 0; padding: 0 4px;
 }
-.profile-interests-grid {
-  display: flex; flex-wrap: wrap; gap: 8px;
+.profile-interests-edit-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(120px, 1fr));
+  gap: 14px;
+  margin-bottom: 20px;
+  width: 100%;
 }
 .profile-interest-pill {
   padding: 8px 16px; border-radius: 24px;
@@ -1809,6 +1965,66 @@ const App = () => {
 .profile-empty {
   font-size: 13px; color: var(--text-secondary);
   margin: 0; padding: 4px; font-style: italic;
+}
+.profile-section-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 0 4px;
+  margin-bottom: 4px;
+}
+.profile-section-header .profile-section-title {
+  margin: 0;
+  padding: 0;
+}
+.profile-edit-btn {
+  font-size: 12px; font-weight: 600; font-family: inherit;
+  color: var(--text-secondary);
+  background: rgba(0,0,0,0.04);
+  border: 1px solid rgba(0,0,0,0.08);
+  border-radius: 20px;
+  padding: 5px 12px;
+  cursor: pointer;
+  transition: var(--transition-smooth);
+  letter-spacing: 0.01em;
+}
+.profile-edit-btn:hover {
+  background: var(--text-primary);
+  color: var(--bg-colour);
+  border-color: var(--text-primary);
+  box-shadow: 0 4px 12px rgba(0,0,0,0.12);
+}
+.profile-interests-edit-grid {
+  display: flex; flex-wrap: wrap; gap: 14px;
+  margin-bottom: 20px;
+}
+.profile-edit-actions {
+  display: flex; flex-direction: column; gap: 10px;
+}
+.profile-save-btn {
+  width: 100%; padding: 14px;
+  background: var(--text-primary); color: var(--bg-colour);
+  border: none; border-radius: 14px;
+  font-size: 15px; font-weight: 600; font-family: inherit;
+  cursor: pointer;
+  box-shadow: 0 6px 20px rgba(0,0,0,0.14);
+  transition: background 0.2s ease, box-shadow 0.2s ease;
+  display: flex; align-items: center; justify-content: center; min-height: 50px;
+}
+.profile-save-btn:hover { background: #1a1a1a; box-shadow: 0 10px 28px rgba(0,0,0,0.2); }
+.profile-save-btn:disabled { opacity: 0.7; cursor: not-allowed; }
+.profile-cancel-btn {
+  width: 100%; padding: 13px;
+  background: transparent; color: var(--text-secondary);
+  border: 1px solid rgba(0,0,0,0.08); border-radius: 14px;
+  font-size: 15px; font-weight: 600; font-family: inherit;
+  cursor: pointer;
+  transition: background 0.2s ease, border-color 0.2s ease, color 0.2s ease;
+}
+.profile-cancel-btn:hover {
+  background: rgba(0,0,0,0.03);
+  border-color: rgba(0,0,0,0.18);
+  color: var(--text-primary);
 }
   `;
 
@@ -1875,7 +2091,11 @@ const App = () => {
               </header>
 
               <main className="content-area">
-                <div className="canvas-wrapper" onClick={appState === 'main' && activeTab === 'voice' ? toggleListening : undefined}>
+              <div
+                  className="canvas-wrapper"
+                  onClick={activeTab === 'voice' ? toggleListening : undefined}
+                  style={{ pointerEvents: activeTab === 'friends' ? 'none' : 'auto' }}
+                >
                   <Canvas camera={{ position: [0, 0, 5], fov: 40 }} dpr={[1, Math.min(2, window.devicePixelRatio)]}>
                     <color attach="background" args={['#fafafa']} />
                     <Suspense fallback={<CanvasLoader />}>
