@@ -49,8 +49,13 @@ async def daily_summary(username: str = Query(...)):
     )
 
 @router.post("/summary/forum_answers")
-async def get_forum_answers(username):
-    buf = await collate_forum_answers(username)
+async def get_forum_answers(
+    username: str = Query(...),
+    prefer_with_comments: bool = Query(default=True),
+):
+    buf = await collate_forum_answers(
+        username, prefer_with_comments=prefer_with_comments
+    )
     return StreamingResponse(
         buf,
         media_type="audio/ogg",

@@ -2234,6 +2234,27 @@ const App = () => {
     }
   }, [promptActionChoice]);
 
+  const handlePostSummary = useCallback(async () => {
+    const user = currentUserRef.current;
+    if (!user?.username) return;
+    try {
+      const res = await fetch(
+        `http://127.0.0.1:8000/speech/summary/forum_answers?username=${encodeURIComponent(user.username)}&prefer_with_comments=true`,
+        { method: 'POST' }
+      );
+      if (!res.ok) throw new Error('Failed to fetch post summary');
+      const blob = await res.blob();
+      const url = URL.createObjectURL(blob);
+      if (audioRef.current) { audioRef.current.pause(); URL.revokeObjectURL(audioRef.current.src); }
+      audioRef.current = new Audio(url);
+      audioRef.current.play();
+      audioRef.current.onended = () => { URL.revokeObjectURL(url); promptActionChoice(); };
+    } catch (err) {
+      console.error('Post summary error:', err);
+      promptActionChoice();
+    }
+  }, [promptActionChoice]);
+
   // ── 6. handleActionChoice (depends on speakThenAct + handleSummaryYes, calls listen via ref) ──
   const handleActionChoice = useCallback(async (choice) => {
     setListeningForResponse(false);
@@ -2280,14 +2301,14 @@ const App = () => {
         () => startDailyRecording()
       );
     } else if (trimmed.includes('4') || trimmed.includes('listen') || trimmed.includes('summary')) {
-      await speakThenAct("Of course, here is your daily summary.", () => handleSummaryYes());
+      await speakThenAct("Of course, here is your post summary.", () => handlePostSummary());
     } else {
       await speakThenAct(
-        "Sorry, I didn't catch that. You can ask a question, answer a question, record your daily note, or listen to your summary.",
+        "Sorry, I didn't catch that. You can ask a question, answer a question, record your daily note, or listen to your post summary.",
         () => listenForActionChoiceRef.current?.()
       );
     }
-  }, [speakThenAct, handleSummaryYes, promptActionChoice, startAnswerQuestionRecording, startAskQuestionRecording, startDailyRecording]);
+  }, [speakThenAct, handlePostSummary, promptActionChoice, startAnswerQuestionRecording, startAskQuestionRecording, startDailyRecording]);
 
   // ── 7. handleGeneralisedChoice (depends on speakThenAct + handleSummaryYes + promptActionChoice) ──
   const handleGeneralisedChoice = useCallback(async (choice) => {

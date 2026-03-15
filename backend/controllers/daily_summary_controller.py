@@ -6,9 +6,8 @@ from ..routers.db_router import (
     _get_user_by_username,
     fetch_daily_summary,
     get_audio_segment_from_audio_path,
-    list_forum_answers,
-    list_forum_posts,
 )
+from ..utils.database import forum_answers, forum_posts, users
 from .speech_controller import output_speech
 
 short_pause = AudioSegment.silent(duration=500)
@@ -61,42 +60,89 @@ async def collate_summaries(username):
     return buf
 
 
-async def collate_forum_answers(username):
-    posts = await list_forum_posts(username)
-    recent_post = sorted(posts, key=lambda x: x["createdAt"], reverse=True)[0]
+async def collate_forum_answers(username: str, prefer_with_comments: bool = True):
+    requesting_user = await _get_user_by_username(username, "username")
+    requesting_user_id = requesting_user["_id"]
 
-    combined_audio = AudioSegment.empty()
-
-    post_answers = await list_forum_answers(recent_post["postId"])
-    if post_answers == {}:
+    user_posts = [
+        post
+        async for post in forum_posts.find({"authorId": requesting_user_id}).sort(
+            "createdAt", -1
+        )
+    ]
+    if not user_posts:
         intro_generator = await output_speech(
-            username, f"No one has answered your post yet."
+            username, "You have not posted a forum question yet."
         )
         intro_bytes = b"".join(intro_generator)
-        intro_seg = AudioSegment.from_file(io.BytesIO(intro_bytes), format="ogg")
-        combined_audio += intro_seg
+        combined_audio = AudioSegment.from_file(io.BytesIO(intro_bytes), format="ogg")
+        buf = io.BytesIO()
+        combined_audio.export(buf, format="ogg", codec="libopus")
+        buf.seek(0)
+        return buf
+
+    target_post = user_posts[0]
+    if prefer_with_comments:
+        for post in user_posts:
+            has_answers = await forum_answers.find_one({"postId": post["_id"]}, {"_id": 1})
+            if has_answers is not None:
+                target_post = post
+                break
+
+    post_answers = [
+        answer
+        async for answer in forum_answers.find({"postId": target_post["_id"]}).sort(
+            "createdAt", 1
+        )
+    ]
+    if not post_answers:
+        intro_generator = await output_speech(
+            username, "No one has answered your most recent forum post yet."
+        )
+        intro_bytes = b"".join(intro_generator)
+        combined_audio = AudioSegment.from_file(io.BytesIO(intro_bytes), format="ogg")
+        buf = io.BytesIO()
+        combined_audio.export(buf, format="ogg", codec="libopus")
+        buf.seek(0)
+        return buf
+
+    intro_generator = await output_speech(
+        username, "Here are the latest replies to your forum post."
+    )
+    intro_bytes = b"".join(intro_generator)
+    combined_audio = AudioSegment.from_file(io.BytesIO(intro_bytes), format="ogg")
+    combined_audio += long_pause
 
     for answer in post_answers:
-        print(answer)
-
-        if not answer:
-            print("No answers found for your post", username)
+        transcript_text = str(answer.get("transcriptText", "")).strip()
+        if not transcript_text:
             continue
+
+        answer_author = await users.find_one({"_id": answer["authorId"]})
+        speaker_username = (
+            answer_author["username"]
+            if answer_author and isinstance(answer_author.get("username"), str)
+            else username
+        )
+        speaker_name = (
+            answer_author["username"]
+            if answer_author and isinstance(answer_author.get("username"), str)
+            else "Someone"
+        )
 
         try:
-            intro_generator = await output_speech(
-                answer["authorId"],
-                f"{answer['authorId']} said {answer['transcriptText']}",
+            response_generator = await output_speech(
+                speaker_username, f"{speaker_name} said {transcript_text}"
             )
-
-            intro_bytes = b"".join(intro_generator)
-            intro_seg = AudioSegment.from_file(io.BytesIO(intro_bytes), format="ogg")
-
-            combined_audio += intro_seg + long_pause
-            print("forumanswer")
+            response_bytes = b"".join(response_generator)
+            response_segment = AudioSegment.from_file(
+                io.BytesIO(response_bytes), format="ogg"
+            )
+            combined_audio += response_segment + long_pause
         except Exception as e:
-            print(f"Error processing {username}: {e}")
+            print(f"Error processing forum answer audio for {speaker_name}: {e}")
             continue
+
     buf = io.BytesIO()
     combined_audio.export(buf, format="ogg", codec="libopus")
     buf.seek(0)
