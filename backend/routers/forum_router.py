@@ -8,8 +8,12 @@ from .db_router import (
     _get_user_by_username,
     _parse_object_id,
     _serialize_document,
+    create_forum_post,
+    list_interests,
     list_matching_forum_posts,
 )
+from .speech_router import categorize_text
+from ..models.models import ForumPost
 from ..utils.database import forum_answers, forum_posts
 
 router = APIRouter()
@@ -18,6 +22,10 @@ router = APIRouter()
 class ForumTextAnswerRequest(BaseModel):
     transcriptText: str
     transcriptMeta: dict = Field(default_factory=dict)
+
+
+class ForumAskQuestionRequest(BaseModel):
+    transcription: str
 
 
 @router.get("/get_question/{username}")
@@ -55,7 +63,7 @@ async def get_question(username: str):
     }
 
 
-@router.post("/answer-question/{username}/{post_id}")
+@router.post("/answer_question/{username}/{post_id}")
 async def answer_question(
     username: str, post_id: str, request: ForumTextAnswerRequest
 ):
@@ -87,3 +95,51 @@ async def answer_question(
     result = await forum_answers.insert_one(payload)
     created_answer = await forum_answers.find_one({"_id": result.inserted_id})
     return _serialize_document(created_answer)
+
+
+@router.post("/ask_question/{username}")
+async def ask_question(username: str, request: ForumAskQuestionRequest):
+    user = await _get_user_by_username(username, "username")
+    question_text = request.transcription.strip()
+    if not question_text:
+        raise HTTPException(status_code=400, detail="transcription cannot be empty")
+
+    category_result = await categorize_text(question_text)
+    raw_category_name = category_result.get("processed_text", "")
+    if not isinstance(raw_category_name, str):
+        raise HTTPException(status_code=502, detail="Failed to categorize question")
+
+    normalized_category_name = (
+        raw_category_name.strip().strip('"').strip("'").rstrip(".,!?;:")
+    )
+    if not normalized_category_name:
+        raise HTTPException(status_code=502, detail="Failed to categorize question")
+
+    available_interests = await list_interests()
+    selected_interest = next(
+        (
+            interest
+            for interest in available_interests
+            if isinstance(interest.get("name"), str)
+            and interest["name"].strip().lower() == normalized_category_name.lower()
+        ),
+        None,
+    )
+    if selected_interest is None:
+        raise HTTPException(
+            status_code=404,
+            detail=f"Interest category not found: {normalized_category_name}",
+        )
+
+    forum_post = ForumPost(
+        authorId=str(user["_id"]),
+        interestIds=[selected_interest["id"]],
+        questionText=question_text,
+        createdAt=datetime.now(timezone.utc),
+    )
+    created_post = await create_forum_post(forum_post)
+    return {
+        "question": created_post,
+        "interestName": selected_interest["name"],
+        "interestId": selected_interest["id"],
+    }
