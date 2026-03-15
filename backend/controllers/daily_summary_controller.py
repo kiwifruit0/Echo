@@ -1,21 +1,28 @@
-from pydub import AudioSegment
-import requests
-from .speech_controller import output_speech
-from ..routers.db_router import fetch_daily_summary
-import io
 import asyncio
+import io
+
+import requests
+from pydub import AudioSegment
+
+from ..routers.db_router import fetch_daily_summary
+from .speech_controller import output_speech
 
 short_pause = AudioSegment.silent(duration=500)
 long_pause = AudioSegment.silent(duration=1500)
+
+
 def get_audio_from_url(url, format):
-    response = requests.get(url, )
-    response.raise_for_status() #
-    
+    response = requests.get(
+        url,
+    )
+    response.raise_for_status()
+
     audio_data = io.BytesIO(response.content)
-    
+
     audio = AudioSegment.from_file(audio_data)
-    
+
     return audio
+
 
 async def collate_summaries(user):
     result = await fetch_daily_summary(user)
@@ -39,7 +46,9 @@ async def collate_summaries(user):
 
             summary_generator = output_speech(None, notes_text)
             summary_bytes = b"".join(summary_generator)
-            summary_seg = AudioSegment.from_file(io.BytesIO(summary_bytes), format="ogg")
+            summary_seg = AudioSegment.from_file(
+                io.BytesIO(summary_bytes), format="ogg"
+            )
 
             combined_audio += intro_seg + short_pause + summary_seg + long_pause
         except Exception as e:
@@ -47,6 +56,6 @@ async def collate_summaries(user):
             continue
 
     buf = io.BytesIO()
-    combined_audio.export(buf, format="ogg")
+    combined_audio.export(buf, format="ogg", codec="libopus")
     buf.seek(0)
     return buf
