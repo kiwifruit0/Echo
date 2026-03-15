@@ -54,7 +54,7 @@ async def collate_summaries(username):
 
 async def collate_forum_answers(username):
     posts = await list_forum_posts(username)
-    recent_post = dict(sorted(posts.items(), key=lambda item: item[1].createdAt, reverse=True))[0]
+    sorted_posts = sorted(posts, key=lambda x: x.createdAt, reverse=True)[0]
 
     combined_audio = AudioSegment.empty()
 
