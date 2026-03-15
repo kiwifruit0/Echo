@@ -1,5 +1,5 @@
 from ..controllers.speech_controller import call_gemini
-from fastapi import APIRouter
+from fastapi import APIRouter, Query
 from ..controllers.daily_summary_controller import collate_summaries
 from fastapi.responses import StreamingResponse
 
@@ -31,10 +31,9 @@ async def humanize_text(text):
 
 
 @router.post("/summary/daily")
-async def daily_summary(username: str):
+async def daily_summary(username: str = Query(...)):
     buf = await collate_summaries(username)
     return StreamingResponse(
         buf,
-        media_type="audio/mpeg",
-        headers={"Access-Control-Allow-Origin": "http://localhost:5173"}
+        media_type="audio/ogg",
     )

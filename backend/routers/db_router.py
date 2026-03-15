@@ -401,8 +401,7 @@ async def get_user_friends(username: str):
     ]
 
 
-@router.get("/users/{username}/daily-summary")
-async def get_daily_summary(username: str):
+async def fetch_daily_summary(username: str):
     user = await _get_user_by_username(username, "username")
     user_id = user["_id"]
     friend_ids = await _get_accepted_friend_ids(user_id)
@@ -463,6 +462,11 @@ async def get_daily_summary(username: str):
         "windowEnd": window_end.isoformat(),
         "friendSummaries": friend_summaries,
     }
+
+
+@router.get("/users/{username}/daily-summary")
+async def get_daily_summary(username: str):
+    return await fetch_daily_summary(username)
 
 
 @router.post("/daily-notes")
