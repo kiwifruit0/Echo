@@ -1328,7 +1328,7 @@ const RecordingSession = ({ currentUser, onDone }) => {
 const App = () => {
   const [appState, setAppState] = useState('booting');
   const [currentUser, setCurrentUser] = useState(null);
-  const [showSummaryPrompt, setShowSummaryPrompt] = useState(false);
+  const [summaryPhase, setSummaryPhase] = useState(null);
   const [activeTab, setActiveTab] = useState('voice');
   const [isFriendsListOpen, setIsFriendsListOpen] = useState(false);
   const [selectedFriendId, setSelectedFriendId] = useState(null);
@@ -1339,6 +1339,8 @@ const App = () => {
 
   const [showRecordPrompt, setShowRecordPrompt] = useState(false);
   const [showRecordingSession, setShowRecordingSession] = useState(false);
+
+  const [revealedWords, setRevealedWords] = useState(0);
 
   const fetchFriends = useCallback(async (username) => {
     if (!username) return;
@@ -1359,9 +1361,72 @@ const App = () => {
   const handleLogin = (user) => {
     setCurrentUser(user);
     setAppState('main');
-    setShowSummaryPrompt(true);
     fetchFriends(user.username);
+    askDailySummaryVoice(); // call this after login
   };
+
+  const askDailySummaryVoice = useCallback(async () => {
+    setSummaryPhase('asking');
+    setRevealedWords(0); // reset word reveal
+  
+    const questionText = "Would you like to hear your daily summary?";
+    const words = questionText.split(' ');
+  
+    try {
+      const res = await fetch(
+        `https://api.elevenlabs.io/v1/text-to-speech/${YOUR_VOICE_ID}/with-timestamps`,
+        {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            'xi-api-key': import.meta.env.VITE_ELEVENLABS_API_KEY,
+          },
+          body: JSON.stringify({
+            text: questionText,
+            model_id: 'eleven_multilingual_v2',
+            voice_settings: { stability: 0.5, similarity_boost: 0.75 },
+          }),
+        }
+      );
+      if (!res.ok) return;
+      const data = await res.json();
+  
+      // data.alignment.char_start_times_seconds[i] gives timing per character
+      // Map character timings → word timings
+      const chars = data.alignment.characters;
+      const times = data.alignment.char_start_times_seconds;
+  
+      // Find the start time of the first character of each word
+      let charIdx = 0;
+      const wordTimings = words.map((word) => {
+        // skip spaces
+        while (charIdx < chars.length && chars[charIdx] === ' ') charIdx++;
+        const startTime = times[charIdx] ?? 0;
+        charIdx += word.length;
+        return startTime;
+      });
+  
+      // Decode and play the audio
+      const audioBytes = Uint8Array.from(atob(data.audio_base64), c => c.charCodeAt(0));
+      const blob = new Blob([audioBytes], { type: 'audio/mpeg' });
+      const url = URL.createObjectURL(blob);
+      if (audioRef.current) { audioRef.current.pause(); URL.revokeObjectURL(audioRef.current.src); }
+      audioRef.current = new Audio(url);
+  
+      // Schedule each word reveal to fire at its timestamp
+      wordTimings.forEach((t, i) => {
+        setTimeout(() => setRevealedWords(i + 1), t * 1000);
+      });
+  
+      audioRef.current.play();
+      audioRef.current.onended = () => URL.revokeObjectURL(url);
+  
+    } catch (err) {
+      console.warn('TTS prompt failed:', err);
+      // Fallback: reveal all words instantly
+      setRevealedWords(words.length);
+    }
+  }, []);
 
   const handleRegister = (user) => {
     setCurrentUser(user);
@@ -1545,7 +1610,7 @@ const App = () => {
   };
 
   const handleSummaryYes = async () => {
-    setShowSummaryPrompt(false);
+    setSummaryPhase('playing');
     try {
       const res = await fetch(
         `http://127.0.0.1:8000/speech/summary/daily?username=${encodeURIComponent(currentUser.username)}`,
@@ -1554,19 +1619,18 @@ const App = () => {
       if (!res.ok) throw new Error('Failed to fetch summary');
       const blob = await res.blob();
       const url = URL.createObjectURL(blob);
-      if (audioRef.current) {
-        audioRef.current.pause();
-        URL.revokeObjectURL(audioRef.current.src);
-      }
+      if (audioRef.current) { audioRef.current.pause(); URL.revokeObjectURL(audioRef.current.src); }
       audioRef.current = new Audio(url);
       audioRef.current.play();
       audioRef.current.onended = () => {
         URL.revokeObjectURL(url);
-        setShowRecordPrompt(true); // ← chain into record prompt after playback
+        setSummaryPhase(null);
+        setShowRecordPrompt(true);
       };
     } catch (err) {
       console.error('Daily summary error:', err);
-      setShowRecordPrompt(true); // still show record prompt even on error
+      setSummaryPhase(null);
+      setShowRecordPrompt(true);
     }
   };
 
@@ -1636,13 +1700,12 @@ const App = () => {
     .graph-container:active { cursor: grabbing; }
 
     .interaction-overlay {
-      position: absolute; top: calc(20% + env(safe-area-inset-top));
+      position: absolute; top: 12%;
       left: 50%; transform: translateX(-50%);
       display: flex; flex-direction: column; align-items: center;
       pointer-events: none; z-index: 5;
       width: 80%; max-width: 600px;
     }
-
     .status-badge {
       padding: 8px 16px; border-radius: 24px; font-size: 11px; font-weight: 600; letter-spacing: 0.08em;
       text-transform: uppercase; background-color: rgba(255, 255, 255, 0.6);
@@ -2076,6 +2139,23 @@ const App = () => {
   border-color: rgba(0,0,0,0.18);
   color: var(--text-primary);
 }
+
+.summary-inline-btn {
+  padding: 11px 22px; border-radius: 24px; font-size: 14px;
+  font-weight: 600; font-family: inherit; cursor: pointer; border: none;
+  transition: box-shadow 0.2s ease, background 0.2s ease;
+  backdrop-filter: blur(12px); -webkit-backdrop-filter: blur(12px);
+}
+.summary-inline-btn--yes {
+  background: var(--text-primary); color: var(--bg-colour);
+  box-shadow: 0 4px 16px rgba(0,0,0,0.14);
+}
+.summary-inline-btn--yes:hover { background: #1a1a1a; box-shadow: 0 8px 24px rgba(0,0,0,0.22); }
+.summary-inline-btn--no {
+  background: rgba(255,255,255,0.6); color: var(--text-secondary);
+  border: 1px solid rgba(0,0,0,0.08);
+}
+.summary-inline-btn--no:hover { background: rgba(255,255,255,0.9); color: var(--text-primary); }
   `;
 
   return (
@@ -2181,20 +2261,79 @@ const App = () => {
                   {appState === 'main' && activeTab === 'voice' && (
                     <div className="interaction-overlay" key="interaction-overlay">
                       <AnimatePresence mode="wait">
-                        <motion.div
-                          key={isListening ? 'listening' : 'idle'}
-                          initial={{ opacity: 0, y: 10, filter: 'blur(4px)' }}
-                          animate={{ opacity: 1, y: 0, filter: 'blur(0px)' }}
-                          exit={{ opacity: 0, y: -10, filter: 'blur(4px)' }}
-                          transition={{ duration: 0.3 }}
-                          className="status-badge"
-                          style={{ color: isListening ? '#0a0a0a' : '#878787' }}
-                        >
-                          {isListening ? "Listening..." : "Tap anywhere to capture"}
-                        </motion.div>
+                        {summaryPhase === 'asking' ? (
+                          <motion.div
+                            key="summary-question"
+                            initial={{ opacity: 0, y: 16, filter: 'blur(4px)' }}
+                            animate={{ opacity: 1, y: 0, filter: 'blur(0px)' }}
+                            exit={{ opacity: 0, y: -10, filter: 'blur(4px)' }}
+                            transition={{ duration: 0.4 }}
+                            style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 20 }}
+                          >
+                            <p className="transcript-text" style={{ textAlign: 'center' }}>
+                              "{"Would you like to hear your daily summary?".split(' ').map((word, i) => (
+                                <motion.span
+                                  key={i}
+                                  initial={{ opacity: 0, y: 6, filter: 'blur(3px)' }}
+                                  animate={revealedWords > i
+                                    ? { opacity: 1, y: 0, filter: 'blur(0px)' }
+                                    : { opacity: 0, y: 6, filter: 'blur(3px)' }
+                                  }
+                                  transition={{ duration: 0.25, ease: 'easeOut' }}
+                                  style={{ display: 'inline-block', marginRight: '0.28em' }}
+                                >
+                                  {word}
+                                </motion.span>
+                              ))}"
+                            </p>
+
+                            {/* Only show buttons after all words have appeared */}
+                            <AnimatePresence>
+                              {revealedWords >= "Would you like to hear your daily summary?".split(' ').length && (
+                                <motion.div
+                                  initial={{ opacity: 0, y: 10 }}
+                                  animate={{ opacity: 1, y: 0 }}
+                                  exit={{ opacity: 0 }}
+                                  transition={{ duration: 0.3, delay: 0.2 }}
+                                  style={{ display: 'flex', gap: 12, pointerEvents: 'auto' }}
+                                >
+                                  <motion.button
+                                    className="summary-inline-btn summary-inline-btn--yes"
+                                    whileHover={{ scale: 1.05, y: -1 }}
+                                    whileTap={{ scale: 0.95 }}
+                                    onClick={handleSummaryYes}
+                                  >
+                                    Yes, play it
+                                  </motion.button>
+                                  <motion.button
+                                    className="summary-inline-btn summary-inline-btn--no"
+                                    whileHover={{ scale: 1.05, y: -1 }}
+                                    whileTap={{ scale: 0.95 }}
+                                    onClick={() => { setSummaryPhase(null); setShowRecordPrompt(true); }}
+                                  >
+                                    Not now
+                                  </motion.button>
+                                </motion.div>
+                              )}
+                            </AnimatePresence>
+                          </motion.div>
+                        ) : (
+                          <motion.div
+                            key={isListening ? 'listening' : 'idle'}
+                            initial={{ opacity: 0, y: 10, filter: 'blur(4px)' }}
+                            animate={{ opacity: 1, y: 0, filter: 'blur(0px)' }}
+                            exit={{ opacity: 0, y: -10, filter: 'blur(4px)' }}
+                            transition={{ duration: 0.3 }}
+                            className="status-badge"
+                            style={{ color: isListening ? '#0a0a0a' : '#878787' }}
+                          >
+                            {isListening ? "Listening..." : "Tap anywhere to capture"}
+                          </motion.div>
+                        )}
                       </AnimatePresence>
+
                       <AnimatePresence>
-                        {transcript && (
+                        {transcript && summaryPhase === null && (
                           <motion.div key="transcript-view" initial={{ opacity: 0, y: 20 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0, y: -20 }} className="transcript-container">
                             <p className="transcript-text">"{transcript}"</p>
                           </motion.div>
@@ -2215,12 +2354,6 @@ const App = () => {
                   onFriendAdded={handleRefreshFriends}
                 />
 
-                {showSummaryPrompt && (
-                  <DailySummaryPrompt
-                    onYes={handleSummaryYes}
-                    onNo={() => { setShowSummaryPrompt(false); setShowRecordPrompt(true); }}
-                  />
-                )}
 
                 {showRecordPrompt && (
                   <RecordDailySummaryPrompt
