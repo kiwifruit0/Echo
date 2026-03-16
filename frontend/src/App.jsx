@@ -13,6 +13,8 @@ import { ForumRecordingOverlay } from './ForumRecordingOverlay';
   npm install framer-motion three @react-three/fiber @react-three/drei lucide-react @react-three/postprocessing react-force-graph-3d @elevenlabs/react
 */
 
+const API_BASE_URL = import.meta.env.VITE_API_URL || "http://127.0.0.1:8000";
+
 // --- 1. Magnetic Interactive Component ---
 const MagneticButton = ({ children, onClick, className, ariaLabel, isActive, hoverScale = 1.05 }) => {
   const ref = useRef(null);
@@ -787,8 +789,8 @@ const AuthField = ({ label, type = 'text', value, onChange, placeholder, showTog
   );
 };
 
-const API_BASE = 'http://127.0.0.1:8000/db';
-const FORUM_BASE = 'http://127.0.0.1:8000/forum';
+const API_BASE = `${API_BASE_URL}/db/users`;
+const FORUM_BASE = `${API_BASE_URL}/forum`;
 
 // --- 9. Login Screen ---
 const LoginScreen = ({ onLogin, onGoToRegister }) => {
@@ -956,7 +958,7 @@ const ForumTab = ({ currentUser }) => {
     try {
       const [recRes, myRes] = await Promise.all([
         fetch(`${FORUM_BASE}/get_question/${encodeURIComponent(currentUser.username)}`),
-        fetch(`http://127.0.0.1:8000/db/forum-posts?author_id=${encodeURIComponent(currentUser.id)}`),
+        fetch(`${API_BASE_URL}/db/forum-posts?author_id=${encodeURIComponent(currentUser.id)}`),
       ]);
 
       const recData = await recRes.json();
@@ -1328,7 +1330,7 @@ const RecordingSession = ({ currentUser, audioRef ,onDone }) => {
   
     try {
       const res = await fetch(
-        `http://127.0.0.1:8000/speech/text_to_speech?username=${encodeURIComponent(currentUser.username)}&text=${encodeURIComponent("What was your day like? Take your time, and when you're done just click the done button.")}`,
+        `${API_BASE_URL}/speech/text_to_speech?username=${encodeURIComponent(currentUser.username)}&text=${encodeURIComponent("What was your day like? Take your time, and when you're done just click the done button.")}`,
         { method: 'POST' }
       );
       if (!res.ok) throw new Error('TTS failed');
@@ -1518,7 +1520,7 @@ const App = () => {
   
     try {
       const res = await fetch(
-        `http://127.0.0.1:8000/speech/text_to_speech?username=${encodeURIComponent(user.username)}&text=${encodeURIComponent(questionText)}`,
+        `${API_BASE_URL}/speech/text_to_speech?username=${encodeURIComponent(user.username)}&text=${encodeURIComponent(questionText)}`,
         { method: 'POST' }
       );
       if (!res.ok) throw new Error('TTS failed');
@@ -1616,7 +1618,7 @@ const App = () => {
 
   const prefetchSignedUrl = useCallback(async () => {
     try {
-      const response = await fetch('http://127.0.0.1:8000/envs/elevenlabs');
+      const response = await fetch(`${API_BASE_URL}/envs/elevenlabs`);
       if (!response.ok) return;
       const data = await response.json();
       signedUrlRef.current = data.signedUrl;
@@ -1659,7 +1661,7 @@ const App = () => {
             if (signedUrlRef.current && Date.now() < signedUrlExpiryRef.current) {
               return signedUrlRef.current;
             }
-            const response = await fetch('http://127.0.0.1:8000/envs/elevenlabs');
+            const response = await fetch(`${API_BASE_URL}/envs/elevenlabs`);
             if (!response.ok) {
               const errData = await response.json();
               throw new Error(errData.detail || 'Backend failed');
@@ -1683,7 +1685,7 @@ const App = () => {
             const formData = new FormData();
             formData.append('file', audioBlob, 'recording.webm');
             formData.append('model_id', 'scribe_v1');
-            const sttResponse = await fetch('http://127.0.0.1:8000/speech-to-text', {
+            const sttResponse = await fetch(`${API_BASE_URL}/speech-to-text`, {
               method: 'POST',
               body: formData,  // no auth header — backend handles it
             })
@@ -1748,7 +1750,7 @@ const App = () => {
       if (!user?.username) { onDone?.(); return; }
   
       const res = await fetch(
-        `http://127.0.0.1:8000/speech/text_to_speech?username=${encodeURIComponent(user.username)}&text=${encodeURIComponent(text)}`,
+        `${API_BASE_URL}/speech/text_to_speech?username=${encodeURIComponent(user.username)}&text=${encodeURIComponent(text)}`,
         { method: 'POST' }
       );
       if (!res.ok) throw new Error('TTS failed');
@@ -1831,7 +1833,7 @@ const App = () => {
           const formData = new FormData();
           formData.append('file', blob, 'response.webm');
           formData.append('model_id', 'scribe_v1');
-          const sttRes = await fetch('http://127.0.0.1:8000/speech-to-text', {
+          const sttRes = await fetch(`${API_BASE_URL}/speech-to-text`, {
             method: 'POST',
             body: formData,
           });
@@ -1900,7 +1902,7 @@ const App = () => {
       }
 
       const genRes = await fetch(
-        `http://127.0.0.1:8000/speech/yes_or_no?text=${encodeURIComponent(text)}`,
+        `${API_BASE_URL}/speech/yes_or_no?text=${encodeURIComponent(text)}`,
         { method: 'POST' }
       );
       if (!genRes.ok) {
@@ -1930,7 +1932,7 @@ const App = () => {
         return;
       }
       const genRes = await fetch(
-        `http://127.0.0.1:8000/speech/generalise?text=${encodeURIComponent(text)}`,
+        `${API_BASE_URL}/speech/generalise?text=${encodeURIComponent(text)}`,
         { method: 'POST' }
       );
       if (!genRes.ok) throw new Error('Generalise failed');
@@ -1961,7 +1963,7 @@ const App = () => {
     const formData = new FormData();
     formData.append('file', blob, filename);
     formData.append('model_id', 'scribe_v1');
-    const sttRes = await fetch('http://127.0.0.1:8000/speech-to-text', {
+    const sttRes = await fetch(`${API_BASE_URL}/speech-to-text`, {
       method: 'POST',
       body: formData,
     });
@@ -2201,7 +2203,7 @@ const App = () => {
     if (!user?.username) return;
     try {
       const res = await fetch(
-        `http://127.0.0.1:8000/speech/summary/daily?username=${encodeURIComponent(user.username)}`,
+        `${API_BASE_URL}/speech/summary/daily?username=${encodeURIComponent(user.username)}`,
         { method: 'POST' }
       );
       if (!res.ok) throw new Error('Failed to fetch summary');
@@ -2222,7 +2224,7 @@ const App = () => {
     if (!user?.username) return;
     try {
       const res = await fetch(
-        `http://127.0.0.1:8000/speech/summary/forum_answers?username=${encodeURIComponent(user.username)}&prefer_with_comments=true`,
+        `${API_BASE_URL}/speech/summary/forum_answers?username=${encodeURIComponent(user.username)}&prefer_with_comments=true`,
         { method: 'POST' }
       );
       if (!res.ok) throw new Error('Failed to fetch post summary');
