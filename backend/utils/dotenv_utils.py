@@ -20,7 +20,7 @@ def get_mongo_uri():
 
 def get_supabase_url():
     _load_env()
-    SUPABASE_URL = os.getenv("SUPABASE_URL")
+    SUPABASE_URL = os.getenv("NEXT_PUBLIC_SUPABASE_URL")
     return SUPABASE_URL
 
 
@@ -32,7 +32,7 @@ def get_supabase_service_role_key():
 
 def get_supabase_storage_bucket():
     _load_env()
-    SUPABASE_STORAGE_BUCKET = os.getenv("SUPABASE_STORAGE_BUCKET")
+    SUPABASE_STORAGE_BUCKET = os.getenv("NEXT_PUBLIC_SUPABASE_STORAGE_BUCKET")
     return SUPABASE_STORAGE_BUCKET
 
 
@@ -41,4 +41,4 @@ def get_elevenlabs_key():
 
 def get_agent_id():
     # This is the specific ID for the transcription agent
-    return os.getenv("AGENT_ID")
+    return os.getenv("NEXT_PUBLIC_AGENT_ID")
