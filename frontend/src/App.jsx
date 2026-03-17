@@ -789,7 +789,7 @@ const AuthField = ({ label, type = 'text', value, onChange, placeholder, showTog
   );
 };
 
-const API_BASE = `${API_BASE_URL}/db/users`;
+const API_BASE = `${API_BASE_URL}/db`;
 const FORUM_BASE = `${API_BASE_URL}/forum`;
 
 // --- 9. Login Screen ---
