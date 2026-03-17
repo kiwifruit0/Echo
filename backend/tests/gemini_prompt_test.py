@@ -1,7 +1,7 @@
-from ..controllers.speech_controller import call_gemini
+from controllers.speech_controller import call_gemini
 import asyncio
 
-from ..utils.dotenv_utils import get_elevenlabs_key
+from utils.dotenv_utils import get_elevenlabs_key
 from elevenlabs.client import ElevenLabs
 from elevenlabs.play import play
 

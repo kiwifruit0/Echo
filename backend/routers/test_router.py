@@ -1,4 +1,4 @@
-from ..controllers.hello_controller import hello
+from controllers.hello_controller import hello
 from fastapi import APIRouter
 
 router = APIRouter()

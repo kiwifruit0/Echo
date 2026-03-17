@@ -3,8 +3,8 @@ from elevenlabs.play import play
 from fastapi import HTTPException
 from google import genai
 
-from ..routers.db_router import _get_user_by_username
-from ..utils.dotenv_utils import get_elevenlabs_key
+from routers.db_router import _get_user_by_username
+from utils.dotenv_utils import get_elevenlabs_key
 
 elevenlabs = ElevenLabs(api_key=get_elevenlabs_key())
 client = genai.Client()

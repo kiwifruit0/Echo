@@ -1,7 +1,7 @@
 # File: backend/routers/dotenv_router.py
 from fastapi import APIRouter, HTTPException
 from elevenlabs.client import ElevenLabs
-from backend.utils.dotenv_utils import get_elevenlabs_key, get_agent_id
+from utils.dotenv_utils import get_elevenlabs_key, get_agent_id
 import logging
 
 router = APIRouter()

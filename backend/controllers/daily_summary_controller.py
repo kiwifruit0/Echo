@@ -2,12 +2,12 @@ import io
 
 from pydub import AudioSegment
 
-from ..routers.db_router import (
+from routers.db_router import (
     _get_user_by_username,
     fetch_daily_summary,
     get_audio_segment_from_audio_path,
 )
-from ..utils.database import forum_answers, forum_posts, users
+from utils.database import forum_answers, forum_posts, users
 from .speech_controller import output_speech
 
 short_pause = AudioSegment.silent(duration=500)

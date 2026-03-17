@@ -4,7 +4,7 @@ from datetime import datetime, timezone
 from fastapi import APIRouter, HTTPException
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel, Field
-from ..controllers.daily_summary_controller import collate_forum_answers
+from controllers.daily_summary_controller import collate_forum_answers
 from .db_router import list_interests
 
 
@@ -17,8 +17,8 @@ from .db_router import (
     list_matching_forum_posts,
 )
 from .speech_router import categorize_text
-from ..models.models import ForumPost
-from ..utils.database import forum_answers, forum_posts
+from models.models import ForumPost
+from utils.database import forum_answers, forum_posts
 
 router = APIRouter()
 

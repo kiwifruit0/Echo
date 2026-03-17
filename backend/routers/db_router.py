@@ -12,7 +12,7 @@ from pydub import AudioSegment
 from pymongo import UpdateOne
 from pymongo.errors import DuplicateKeyError
 
-from ..models.models import (
+from models.models import (
     DailyNote,
     ForumAnswer,
     ForumPost,
@@ -21,7 +21,7 @@ from ..models.models import (
     UserInterestAddRequest,
     UserVoiceIdUpdateRequest,
 )
-from ..utils.database import (
+from utils.database import (
     daily_notes,
     forum_answers,
     forum_posts,
@@ -29,7 +29,7 @@ from ..utils.database import (
     interests,
     users,
 )
-from ..utils.supabase_storage import (
+from utils.supabase_storage import (
     SupabaseStorageError,
     create_storage_signed_url,
     upload_storage_object,
